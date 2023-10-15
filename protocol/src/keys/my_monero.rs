@@ -5,7 +5,7 @@ use sigma_fun::ed25519::curve25519_dalek::edwards::CompressedEdwardsY;
 use sigma_fun::ed25519::curve25519_dalek::edwards::EdwardsPoint;
 use sigma_fun::ed25519::curve25519_dalek::scalar::Scalar;
 
-use super::macros::impl_debug_display;
+use crate::utils::impl_debug_display;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PrivateKey(Scalar);

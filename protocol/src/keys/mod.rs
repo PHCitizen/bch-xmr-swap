@@ -1,11 +1,13 @@
+use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 use sigma_fun::{
     ed25519::curve25519_dalek::{edwards::EdwardsPoint, scalar::Scalar as ScalarD},
     ext::dl_secp256k1_ed25519_eq::CrossCurveDLEQProof,
 };
 
+use crate::utils::dbg_hexlify;
+
 pub mod bitcoin;
-mod macros;
 pub mod my_monero;
 
 #[derive(Debug, Clone)]
@@ -36,7 +38,7 @@ impl Keys {
     pub fn public(&self) -> KeyPublic {
         let (proof, (spend_bch, _)) = self.prove();
         KeyPublic {
-            locking_bytecode: self.bch.public_key().pubkey_hash().get_P2PKH(),
+            locking_bytecode: self.bch.public_key().pubkey_hash().P2PKH_locking_bytecode(),
             ves: self.ves.public_key(),
             view: self.view.clone(),
             spend: self.spend.public_key(),
@@ -49,7 +51,8 @@ impl Keys {
 #[derive(derivative::Derivative, Clone, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct KeyPublic {
-    pub locking_bytecode: String,
+    #[derivative(Debug(format_with = "dbg_hexlify"))]
+    pub locking_bytecode: Vec<u8>,
     pub ves: bitcoin::PublicKey,
     pub view: my_monero::PrivateKey,
 
@@ -59,9 +62,11 @@ pub struct KeyPublic {
     pub proof: CrossCurveDLEQProof,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Derivative, Clone)]
+#[derivative(Debug)]
 pub struct KeyPublicWithoutProof {
-    pub locking_bytecode: String,
+    #[derivative(Debug(format_with = "dbg_hexlify"))]
+    pub locking_bytecode: Vec<u8>,
     pub ves: bitcoin::PublicKey,
     pub view: my_monero::PrivateKey,
 
