@@ -134,6 +134,6 @@ mod test {
         let add_pub_spend = monero::PublicKey::from_private_key(&bob.0)
             + monero::PublicKey::from_private_key(&alice.0);
 
-        assert!(add_priv_spend_pub == add_pub_spend);
+        assert_eq!(add_priv_spend_pub, add_pub_spend);
     }
 }

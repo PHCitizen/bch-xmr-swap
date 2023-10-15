@@ -117,9 +117,13 @@ mod test {
             failed_output: output,
         };
 
-        assert!(refund.cash_address() == "bitcoincash:prmnwxmmaq58h22jt7qrjmutnkrmrfm4j57zy4cf45");
-        assert!(
-            refund.cash_token_address() == "bitcoincash:rrmnwxmmaq58h22jt7qrjmutnkrmrfm4j5eghtk028"
+        assert_eq!(
+            refund.cash_address(),
+            "bitcoincash:prmnwxmmaq58h22jt7qrjmutnkrmrfm4j57zy4cf45"
+        );
+        assert_eq!(
+            refund.cash_token_address(),
+            "bitcoincash:rrmnwxmmaq58h22jt7qrjmutnkrmrfm4j5eghtk028"
         );
     }
 }

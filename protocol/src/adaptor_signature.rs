@@ -117,6 +117,9 @@ mod test {
         let alice_spend_recovered =
             AdaptorSignature::recover_decryption_key(alicepub.spend_bch, dec_sig, enc_sig);
 
-        assert!(alice_spend_recovered.to_string() == alice.monero_spend.to_string())
+        assert_eq!(
+            alice_spend_recovered.to_string(),
+            alice.monero_spend.to_string()
+        )
     }
 }
