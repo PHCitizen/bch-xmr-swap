@@ -1,7 +1,7 @@
 use crate::{
     keys::{KeyPublicWithoutProof, Keys},
     proof,
-    protocol::{ExitCode, Response, StateMachine, Transition},
+    protocol::{Action, ExitCode, Response, StateMachine, Transition},
 };
 
 #[derive(Debug)]
@@ -22,21 +22,29 @@ pub enum State {
 
     // If alice EncSig cannot unlock Refund.cash, return Response::Exit
     // Else:
-    //      proceed to State::WaitingForXmrTx
-    //      return tx sending bch to Swaplock.cash
-    //          the caller is responsible in brodcasting the tx
+    //      proceed to State::WaitingForBchTxHash
+    //      return Action::BchTxHash
     WaitingForEncSig {
         keys: KeyPublicWithoutProof,
+    },
+
+    // If tx has correct amount and destination
+    //      proceed to State::WaitingForXmrTx
+    // Else
+    //      return Action::BchTxHash - ask for new tx
+    WaitingForBchTxHash {
+        keys: KeyPublicWithoutProof,
+        enc_sig: String,
     },
 
     // If Locked Monero does not satisfy initial "swap requirements".
     //    proceed to State::SwapFailed
     //    return Response::RefundTx
     // Else proceed to State::WaitingForXmrConf
-    WaitingForXmrTx {
+    WaitingForXmrTxHash {
         keys: KeyPublicWithoutProof,
         enc_sig: String,
-        bch_tx: String,
+        bch_tx_hash: String,
     },
 
     // Verify that monero has enough confirmation.
@@ -45,7 +53,7 @@ pub enum State {
     WaitingForXmrConf {
         keys: KeyPublicWithoutProof,
         enc_sig: String,
-        bch_tx: String,
+        bch_tx_hash: String,
         xmr_tx: String,
     },
 
@@ -59,7 +67,7 @@ pub enum State {
     WaitingForDecSig {
         keys: KeyPublicWithoutProof,
         enc_sig: String,
-        bch_tx: String,
+        bch_tx_hash: String,
         xmr_tx: String,
     },
 
@@ -76,9 +84,18 @@ pub enum State {
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Bob {
-    pub state: State,
     #[derivative(Debug = "ignore")]
     keys: Keys,
+    pub state: State,
+}
+
+impl Bob {
+    pub fn new() -> Self {
+        Self {
+            keys: Keys::random(),
+            state: State::WaitingForKeys,
+        }
+    }
 }
 
 impl StateMachine for Bob {
@@ -87,7 +104,10 @@ impl StateMachine for Bob {
             State::WaitingForKeys => Transition::Keys(self.keys.public()),
             State::WaitingForContract { .. } => Transition::None,
             State::WaitingForEncSig { .. } => Transition::None,
-            State::WaitingForXmrTx { bch_tx, .. } => Transition::BchTx(bch_tx.clone()),
+            State::WaitingForBchTxHash { .. } => Transition::None,
+            State::WaitingForXmrTxHash { bch_tx_hash, .. } => {
+                Transition::BchTxHash(bch_tx_hash.clone())
+            }
             State::WaitingForXmrConf { .. } => Transition::None,
             State::WaitingForDecSig { .. } => Transition::EncSig(String::from("")),
             State::SwapSuccess { .. } => Transition::None,
@@ -98,73 +118,107 @@ impl StateMachine for Bob {
     fn transition(&mut self, transition: Transition) -> Response {
         match (&self.state, transition) {
             (State::WaitingForKeys, Transition::Keys(keys)) => {
-                let is_valid_keys = proof::verify(
-                    &keys.proof,
-                    (keys.spend_bch.clone().into(), keys.spend.clone().into()),
-                );
+                // let is_valid_keys = proof::verify(
+                //     &keys.proof,
+                //     (keys.spend_bch.clone().into(), keys.spend.clone().into()),
+                // );
 
-                if !is_valid_keys {
-                    return Response::Exit(ExitCode::InvalidProof);
-                }
+                // if !is_valid_keys {
+                //     return Response::Exit(ExitCode::InvalidProof);
+                // }
 
                 self.state = State::WaitingForContract { keys: keys.into() };
-                return Response::Continue;
+                return Response::Continue(Action::None);
             }
             (State::WaitingForContract { keys }, Transition::Contract(_)) => {
-                // todo: Check Contract
+                // todo: ExitCode::ContractMismatch
                 self.state = State::WaitingForEncSig {
                     keys: keys.to_owned(),
                 };
-                return Response::Continue;
+                return Response::Continue(Action::None);
             }
             (State::WaitingForEncSig { keys }, Transition::EncSig(enc_sig)) => {
-                // todo: check if enc_sig can unlock Refund.cash
-                // send bch to SwapLock contract
+                // todo: ExitCode::EncSigFailed
                 let bch_tx = String::from("value");
-                self.state = State::WaitingForXmrTx {
+                self.state = State::WaitingForBchTxHash {
                     keys: keys.to_owned(),
                     enc_sig,
-                    bch_tx,
                 };
-                return Response::BchRawTx(String::from("BCH TX"));
+                return Response::Continue(Action::BchTxHash);
             }
-            (
-                State::WaitingForXmrTx {
-                    keys,
-                    enc_sig,
-                    bch_tx,
-                },
-                Transition::XmrTx(tx),
-            ) => {
-                // todo: check if xmr has correct amount
-                self.state = State::WaitingForDecSig {
+            (State::WaitingForBchTxHash { keys, enc_sig }, Transition::BchTxHash(bch_tx_hash)) => {
+                // todo: check if bch has correct amount
+                // Action::BchTxHash
+                self.state = State::WaitingForXmrTxHash {
                     keys: keys.to_owned(),
                     enc_sig: enc_sig.to_owned(),
-                    bch_tx: bch_tx.to_owned(),
+                    bch_tx_hash,
+                };
+                return Response::Continue(Action::None);
+            }
+
+            (
+                State::WaitingForXmrTxHash {
+                    keys,
+                    enc_sig,
+                    bch_tx_hash: bch_tx,
+                },
+                Transition::XmrTxHash(tx),
+            ) => {
+                // todo: check if xmr has correct amount
+                // Action::InvalidTx
+
+                self.state = State::WaitingForXmrConf {
+                    keys: keys.to_owned(),
+                    enc_sig: enc_sig.to_owned(),
+                    bch_tx_hash: bch_tx.to_owned(),
                     xmr_tx: tx,
                 };
 
-                return Response::Continue;
+                return Response::Continue(Action::WaitXmrConfirmation);
             }
+
+            (
+                State::WaitingForXmrConf {
+                    keys,
+                    enc_sig,
+                    bch_tx_hash: bch_tx,
+                    xmr_tx,
+                },
+                Transition::XmrConfirmed,
+            ) => {
+                // todo: if not confirmed, Action::WaitXmrConfirmation
+
+                self.state = State::WaitingForDecSig {
+                    keys: keys.to_owned(),
+                    enc_sig: enc_sig.to_owned(),
+                    bch_tx_hash: bch_tx.to_owned(),
+                    xmr_tx: xmr_tx.to_owned(),
+                };
+
+                return Response::Continue(Action::WaitForDecSig);
+            }
+
             (
                 State::WaitingForDecSig {
                     keys,
                     enc_sig,
-                    bch_tx,
+                    bch_tx_hash,
                     xmr_tx,
                 },
                 Transition::DecSig(decsig),
             ) => {
+                // If invalid decsig, return Action::WaitForDecSig
                 self.state = State::SwapSuccess {
                     keys: keys.to_owned(),
                     enc_sig: enc_sig.to_owned(),
-                    bch_tx: bch_tx.to_owned(),
+                    bch_tx: bch_tx_hash.to_owned(),
                     xmr_tx: xmr_tx.to_owned(),
                     decsig,
                 };
-                return Response::End;
+                return Response::End(Action::None);
             }
-            (_, _) => return Response::Continue,
+            (_, _) => return Response::Continue(Action::None),
         }
     }
 }
