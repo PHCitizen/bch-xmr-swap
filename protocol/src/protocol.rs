@@ -3,16 +3,31 @@ use crate::keys::KeyPublic;
 #[derive(Debug)]
 pub enum ExitCode {
     InvalidProof,
+    ContractMismatch,
+    InvalidEncSig,
+}
+
+#[derive(Debug)]
+pub enum Action {
+    BchTxHash,
+    WaitBchConfirmation,
+    XmrTxHash,
+    WaitXmrConfirmation,
+    InvalidTx,
+    WaitForDecSig,
+    RefundTx(Vec<u8>),
+    SwapLockTx(Vec<u8>),
+    None,
 }
 
 #[derive(Debug)]
 pub enum Response {
-    End,
-    Continue,
-    BchRawTx(String),
-    XmrRawTx(String),
-    RefundTx(String),
-    // ? exit the program and dont proceed the swap. Exit Code enum?
+    /// do some action first before successfuly ending the swap
+    End(Action),
+    /// continue the swap and proceed with the next step
+    /// the caller is responsible for doing some action
+    Continue(Action),
+    /// exit the program and don't proceed the swap
     Exit(ExitCode),
 }
 
@@ -21,9 +36,9 @@ pub enum Transition {
     None,
     Keys(KeyPublic),
     Contract(String),
-    BchTx(String),
+    BchTxHash(String),
     BchConfirmed,
-    XmrTx(String),
+    XmrTxHash(String),
     XmrConfirmed,
     EncSig(String),
     DecSig(String),
