@@ -22,3 +22,6 @@ clap = "4.4.3"
 monero = {version = "0.19.0", features = ["full", "serde"]}
 bitcoin_hashes = "0.13.0"
 derivative = "2.2.0"
+bitcoincash = "0.29.2"
+bech32 = "0.9.1"
+hex-literal = "0.4.1"
