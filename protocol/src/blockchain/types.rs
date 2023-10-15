@@ -1,4 +1,4 @@
-pub mod is_valid_keys {
+pub mod transaction {
     use serde::{Deserialize, Serialize};
 
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,7 +32,7 @@ pub mod is_valid_keys {
         pub script_sig: ScriptSig,
         pub sequence: i64,
         pub txid: String,
-        pub vout: i64,
+        pub vout: u32,
     }
 
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,9 +45,9 @@ pub mod is_valid_keys {
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Vout {
-        pub n: i64,
+        pub n: u32,
         pub script_pub_key: ScriptPubKey,
-        pub value: f64,
+        pub value: u64,
     }
 
     #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,5 +60,17 @@ pub mod is_valid_keys {
         #[serde(default)]
         pub addresses: Vec<String>,
         pub req_sigs: Option<i64>,
+    }
+}
+
+pub mod history {
+    use serde::{Deserialize, Serialize};
+
+    pub type Root = Vec<Root2>;
+
+    #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Root2 {
+        pub height: u64,
+        pub tx_hash: String,
     }
 }
