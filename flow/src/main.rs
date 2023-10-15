@@ -1,14 +1,12 @@
 use protocol::{
-    bob::{Bob, State},
+    alice::{Alice, State as AliceState},
+    bob::{Bob, State as BobState},
     keys::Keys,
     protocol::{Action, ExitCode, Response, StateMachine, Transition},
 };
 
 fn bob() {
     let mut bob = Bob::new();
-
-    // bob allow to give KeyPublic to alice
-    dbg!(bob.get_transition());
 
     let response = bob.transition(Transition::Keys(Keys::random().public()));
     match response {
@@ -81,11 +79,84 @@ fn bob() {
 
     // State::SwapSuccess
     match bob.state {
-        State::SwapSuccess { .. } => println!("> Bob Success"),
+        BobState::SwapSuccess { .. } => println!("> Bob Success"),
         _ => panic!("Bob state not ended successfully"),
     }
 }
 
+fn alice() {
+    let mut alice = Alice::new();
+
+    // State::WaitingForKeys
+    let response = alice.transition(Transition::Keys(Keys::random().public()));
+    match response {
+        // alice send with invalid proof
+        Response::Exit(ExitCode::InvalidProof) => {}
+        // continue the flow
+        Response::Continue(Action::None) => {}
+        _ => {}
+    };
+
+    // State::WaitingForContract
+    let response = alice.transition(Transition::Contract("".to_owned()));
+    match response {
+        // alice and bob contract does not match
+        Response::Exit(ExitCode::ContractMismatch) => {}
+        // continue the flow
+        Response::Continue(Action::None) => {}
+        _ => {}
+    };
+
+    // State::WaitingForBchTxHash
+    let response = alice.transition(Transition::BchTxHash("".to_owned()));
+    match response {
+        // the monero tx received is invalid, ask alice to retry
+        Response::Continue(Action::InvalidTx) => {}
+        // continue the flow
+        Response::Continue(Action::None) => {}
+        _ => {}
+    };
+
+    // State::WaitingForBchConf
+    let response = alice.transition(Transition::BchConfirmed);
+    match response {
+        // the monero tx received is not confirmed, ask alice to retry after some time
+        Response::Continue(Action::WaitBchConfirmation) => {}
+        // continue the flow
+        Response::Continue(Action::None) => {}
+        _ => {}
+    };
+
+    // State::WaitingForXmrTxHash
+    let response = alice.transition(Transition::XmrTxHash("".to_owned()));
+    match response {
+        // invalid bch tx hash, ask user to retry
+        Response::Continue(Action::XmrTxHash) => {}
+        // continue the flow
+        Response::Continue(Action::None) => {}
+        _ => {}
+    };
+
+    // State::WaitingForEncSig
+    let response = alice.transition(Transition::EncSig("".to_owned()));
+    match response {
+        // alice encsig cannot be used to unlock Refund.cash
+        Response::Exit(ExitCode::InvalidEncSig) => {}
+        // continue the flow
+        Response::End(Action::SwapLockTx(_)) => {
+            // get tx from user and use it as transition
+        }
+        _ => {}
+    };
+
+    // State::SwapSuccess
+    match alice.state {
+        AliceState::SwapSuccess { .. } => println!("> Alice Success"),
+        _ => panic!("Alice state not ended successfully"),
+    }
+}
+
 fn main() {
-    bob()
+    bob();
+    alice();
 }

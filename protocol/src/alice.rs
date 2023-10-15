@@ -1,166 +1,149 @@
-// use crate::{
-//     bob::BobTransition,
-//     keys::{KeyPublic, KeyPublicWithoutProof, Keys},
-//     proof, Response, StateMachine,
-// };
+use crate::{
+    keys::{KeyPublicWithoutProof, Keys},
+    proof,
+    protocol::{Action, ExitCode, Response, StateMachine, Transition},
+};
 
-// #[derive(Debug)]
-// pub enum AliceTransition {
-//     BobKeys(KeyPublic),
-//     BCHTx(String),
-//     BCHLocked,
-//     XMRLocked,
-//     EncSig(String),
-// }
+#[derive(Debug)]
+pub enum State {
+    WaitingForKeys,
+    WaitingForContract {
+        keys: KeyPublicWithoutProof,
+    },
+    WaitingForBchTxHash {
+        keys: KeyPublicWithoutProof,
+    },
+    WaitingForBchConf {
+        keys: KeyPublicWithoutProof,
+        bch_tx_hash: String,
+    },
+    WaitingForXmrTxHash {
+        keys: KeyPublicWithoutProof,
+        bch_tx_hash: String,
+    },
+    WaitingForEncSig {
+        keys: KeyPublicWithoutProof,
+        bch_tx_hash: String,
+        xmr_tx_hash: String,
+    },
+    SwapSuccess {
+        keys: KeyPublicWithoutProof,
+        bch_tx_hash: String,
+        xmr_tx_hash: String,
+        enc_sig: String,
+    },
+    SwapFailed,
+}
 
-// #[derive(Debug, Clone)]
-// pub enum AliceState {
-//     WaitingForBobKeys,
-//     WaitingForBCHTx {
-//         bob_keys: KeyPublicWithoutProof,
-//     },
-//     WaitingForBCHConfirmation {
-//         bob_keys: KeyPublicWithoutProof,
-//         bch_tx: String,
-//     },
-//     WaitingForXMRConfirmation {
-//         bob_keys: KeyPublicWithoutProof,
-//         bch_tx: String,
-//         xmr_tx: String,
-//     },
-//     WaitingForSwapLockEncSig {
-//         bob_keys: KeyPublicWithoutProof,
-//         bch_tx: String,
-//         xmr_tx: String,
-//     },
-//     Success {
-//         bob_keys: KeyPublicWithoutProof,
-//         bch_tx_hash: String,
-//         xmr_tx_hash: String,
-//         enc_sig: String,
-//     },
-// }
+#[derive(derivative::Derivative)]
+#[derivative(Debug)]
+pub struct Alice {
+    #[derivative(Debug = "ignore")]
+    keys: Keys,
+    pub state: State,
+}
 
-// #[derive(derivative::Derivative)]
-// #[derivative(Debug)]
-// pub struct Alice {
-//     pub state: AliceState,
-//     #[derivative(Debug = "ignore")]
-//     keys: Keys,
-// }
+impl Alice {
+    pub fn new() -> Self {
+        Self {
+            keys: Keys::random(),
+            state: State::WaitingForKeys,
+        }
+    }
+}
 
-// impl Default for Alice {
-//     fn default() -> Self {
-//         let keys = Keys::random();
-//         Self {
-//             keys,
-//             state: AliceState::WaitingForBobKeys,
-//         }
-//     }
-// }
+impl StateMachine for Alice {
+    fn get_transition(&self) -> Transition {
+        match &self.state {
+            State::WaitingForKeys => Transition::Keys(self.keys.public()),
+            State::WaitingForContract { .. } => Transition::Contract("".to_owned()),
+            State::WaitingForBchTxHash { .. } => Transition::EncSig("".to_owned()),
+            State::WaitingForBchConf { .. } => Transition::None,
+            State::WaitingForXmrTxHash { .. } => Transition::None,
+            State::WaitingForEncSig { .. } => Transition::XmrTxHash("".to_owned()),
+            State::SwapSuccess { .. } => Transition::None,
+            State::SwapFailed { .. } => Transition::None,
+        }
+    }
 
-// impl StateMachine<AliceTransition, BobTransition> for Alice {
-//     fn get_transition(&self) -> Option<BobTransition> {
-//         match &self.state {
-//             AliceState::WaitingForBobKeys => Some(BobTransition::AliceKeys(self.keys.public())),
-//             AliceState::WaitingForBCHTx { bob_keys: _ } => Some(BobTransition::ContractAndEncSig),
-//             AliceState::WaitingForBCHConfirmation {
-//                 bob_keys: _,
-//                 bch_tx: _,
-//             } => None,
-//             AliceState::WaitingForXMRConfirmation {
-//                 bob_keys: _,
-//                 bch_tx: _,
-//                 xmr_tx,
-//             } => Some(BobTransition::XMRTx(xmr_tx.clone())),
-//             AliceState::WaitingForSwapLockEncSig {
-//                 bob_keys: _,
-//                 bch_tx: _,
-//                 xmr_tx: _,
-//             } => None,
-//             AliceState::Success { .. } => None,
-//         }
-//     }
+    fn transition(&mut self, transition: Transition) -> Response {
+        match (&self.state, transition) {
+            (State::WaitingForKeys, Transition::Keys(keys)) => {
+                self.state = State::WaitingForContract { keys: keys.into() };
+                return Response::Continue(Action::None);
+            }
+            (State::WaitingForContract { keys }, Transition::Contract(_)) => {
+                // todo: ExitCode::ContractMismatch
+                self.state = State::WaitingForBchTxHash {
+                    keys: keys.to_owned(),
+                };
+                return Response::Continue(Action::None);
+            }
+            (State::WaitingForBchTxHash { keys }, Transition::BchTxHash(bch_tx_hash)) => {
+                // todo: check if bch has correct amount
+                // Action::BchTxHash
+                self.state = State::WaitingForBchConf {
+                    keys: keys.to_owned(),
+                    bch_tx_hash,
+                };
+                return Response::Continue(Action::None);
+            }
 
-//     fn transition(&mut self, transition: AliceTransition) -> Response {
-//         match (&self.state, transition) {
-//             (AliceState::WaitingForBobKeys, AliceTransition::BobKeys(pubkeys)) => {
-//                 let verified = proof::verify(
-//                     &pubkeys.proof,
-//                     (
-//                         pubkeys.spend_bch.clone().into(),
-//                         pubkeys.spend.clone().into(),
-//                     ),
-//                 );
-//                 if !verified {
-//                     return Response::Exit(String::from("Invalid Proof"));
-//                 }
+            (
+                State::WaitingForBchConf {
+                    keys,
+                    bch_tx_hash: bch_tx,
+                },
+                Transition::BchConfirmed,
+            ) => {
+                // todo: check if xmr has correct amount
+                // Action::InvalidTx
 
-//                 self.state = AliceState::WaitingForBCHTx {
-//                     bob_keys: pubkeys.into(),
-//                 };
+                self.state = State::WaitingForXmrTxHash {
+                    keys: keys.to_owned(),
+                    bch_tx_hash: bch_tx.to_owned(),
+                };
 
-//                 return Response::Continue;
-//             }
+                return Response::Continue(Action::WaitXmrConfirmation);
+            }
 
-//             (AliceState::WaitingForBCHTx { bob_keys }, AliceTransition::BCHTx(bch_tx)) => {
-//                 self.state = AliceState::WaitingForBCHConfirmation {
-//                     bob_keys: bob_keys.to_owned(),
-//                     bch_tx,
-//                 };
+            (
+                State::WaitingForXmrTxHash {
+                    keys,
+                    bch_tx_hash: bch_tx,
+                },
+                Transition::XmrTxHash(xmr_tx_hash),
+            ) => {
+                // todo: if not confirmed, Action::WaitXmrConfirmation
 
-//                 return Response::Continue;
-//             }
+                self.state = State::WaitingForEncSig {
+                    keys: keys.to_owned(),
+                    bch_tx_hash: bch_tx.to_owned(),
+                    xmr_tx_hash: xmr_tx_hash.to_owned(),
+                };
 
-//             (
-//                 AliceState::WaitingForBCHConfirmation { bob_keys, bch_tx },
-//                 AliceTransition::BCHLocked,
-//             ) => {
-//                 self.state = AliceState::WaitingForXMRConfirmation {
-//                     bob_keys: bob_keys.to_owned(),
-//                     bch_tx: bch_tx.to_owned(),
-//                     xmr_tx: String::from(""),
-//                 };
+                return Response::Continue(Action::WaitForDecSig);
+            }
 
-//                 return Response::Continue;
-//             }
+            (
+                State::WaitingForEncSig {
+                    keys,
+                    bch_tx_hash,
+                    xmr_tx_hash,
+                },
+                Transition::EncSig(encsig),
+            ) => {
+                // If invalid decsig, return Action::WaitForDecSig
+                self.state = State::SwapSuccess {
+                    keys: keys.to_owned(),
+                    bch_tx_hash: bch_tx_hash.to_owned(),
+                    xmr_tx_hash: xmr_tx_hash.to_owned(),
+                    enc_sig: encsig.to_owned(),
+                };
+                return Response::End(Action::SwapLockTx(vec![]));
+            }
 
-//             (
-//                 AliceState::WaitingForXMRConfirmation {
-//                     bob_keys,
-//                     bch_tx,
-//                     xmr_tx,
-//                 },
-//                 AliceTransition::XMRLocked,
-//             ) => {
-//                 self.state = AliceState::WaitingForSwapLockEncSig {
-//                     bob_keys: bob_keys.to_owned(),
-//                     bch_tx: bch_tx.to_owned(),
-//                     xmr_tx: xmr_tx.to_owned(),
-//                 };
-
-//                 return Response::Continue;
-//             }
-
-//             (
-//                 AliceState::WaitingForSwapLockEncSig {
-//                     bob_keys,
-//                     bch_tx,
-//                     xmr_tx,
-//                 },
-//                 AliceTransition::EncSig(sig),
-//             ) => {
-//                 self.state = AliceState::Success {
-//                     bob_keys: bob_keys.to_owned(),
-//                     bch_tx_hash: bch_tx.to_owned(),
-//                     xmr_tx_hash: xmr_tx.to_owned(),
-//                     enc_sig: sig,
-//                 };
-
-//                 return Response::End;
-//             }
-
-//             (_, _) => return Response::Exit(String::from("Nothing happend")),
-//         }
-//     }
-// }
+            (_, _) => return Response::Continue(Action::None),
+        }
+    }
+}
