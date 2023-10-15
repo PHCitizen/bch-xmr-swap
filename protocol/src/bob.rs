@@ -1,42 +1,51 @@
 use crate::{
     contract::{Contract, ContractPair},
-    keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
+    keys::{KeyPrivate, KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, StateMachine, Transition},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct Value0 {
+    alice_keys: KeyPublicWithoutProof,
+    alice_bch_recv: Vec<u8>,
+    contract_pair: ContractPair,
+}
+
+#[derive(Debug, Clone)]
+pub struct Value1 {
+    alice_keys: KeyPublicWithoutProof,
+    alice_bch_recv: Vec<u8>,
+    contract_pair: ContractPair,
+    enc_sig: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum State {
+    Init,
     // If alice send keys with invalid proof, Response::Exit
     // Else
     //      proceed to State::WaitingForContract
     //      return Response::Continue
-    WaitingForKeys,
+    // WaitingForKeys,
 
     // If my_contract != alice_contract, Response::Exit
     // Else
     //      proceed to State::WaitingForEncSig
     //      return Response::Continue
-    WaitingForContract {
-        alice_keys: KeyPublicWithoutProof,
-    },
+    WithAliceKey(Value0),
 
     // If alice EncSig cannot unlock Refund.cash, return Response::Exit
     // Else:
     //      proceed to State::WaitingForXmrUnlockedBal
     //      return Action::BchTxHash
-    WaitingForEncSig {
-        alice_keys: KeyPublicWithoutProof,
-    },
+    ContractMatch(Value0),
 
     // If Locked Monero does not satisfy initial "swap requirements".
     //    proceed to State::SwapFailed
     //    return Response::RefundTx
     // Else proceed to State::WaitingForXmrConf
-    WaitingForXmrUnlockedBal {
-        alice_keys: KeyPublicWithoutProof,
-        enc_sig: String,
-    },
+    VerifiedEncSig(Value1),
 
     // Recover EncKey
     // If we can't recover, return Response::Continue
@@ -45,13 +54,11 @@ pub enum State {
     // Else:
     //      proceed to State::SwapSuccess
     //      return Response::End
-    WaitingForDecSig {
-        keys: KeyPublicWithoutProof,
-        enc_sig: String,
-    },
+    MoneroLocked(Value1),
 
     SwapSuccess {
         keys: KeyPublicWithoutProof,
+        alice_bch_recv: Vec<u8>,
         enc_sig: String,
         decsig: String,
         monero_keypair: String,
@@ -59,15 +66,10 @@ pub enum State {
     SwapFailed,
 }
 
-#[derive(derivative::Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct Bob {
-    pub monero_keypair: monero::KeyPair,
-    pub ves_private_key: bitcoin::PrivateKey,
-    pub refund_bytecode: Vec<u8>,
-
-    #[derivative(Debug = "ignore")]
-    pub contract: Option<ContractPair>,
+    pub bob_keys: KeyPrivate,
+    pub bob_bch_recv: Vec<u8>,
 
     pub xmr_amount: u64,
     pub bch_amount: u64,
@@ -77,25 +79,12 @@ pub struct Bob {
 
 // Api endpoints that will be exposed to alice
 impl Bob {
-    pub fn get_keys(&self) -> Option<KeyPublic> {
-        if let State::WaitingForKeys = self.state {
-            let (proof, (spend_bch, _)) = proof::prove(&self.monero_keypair.spend);
-
-            return Some(KeyPublic {
-                locking_bytecode: self.refund_bytecode.clone(),
-                ves: self.ves_private_key.public_key(),
-                view: self.monero_keypair.view.to_string(),
-                spend: monero::PublicKey::from_private_key(&self.monero_keypair.spend),
-                spend_bch,
-                proof,
-            });
-        }
-
-        return None;
+    pub fn get_keys(&self) -> KeyPublic {
+        self.bob_keys.to_public()
     }
 
     pub fn contract(&self) -> Option<String> {
-        if let State::WaitingForContract { .. } = &self.state {
+        if let State::WithAliceKey { .. } = &self.state {
             // return self.bch_tx_hash();
             return Some("".to_owned());
         }
@@ -104,7 +93,7 @@ impl Bob {
     }
 
     pub fn swaplock_enc_sig(&self) -> Option<String> {
-        if let State::WaitingForDecSig { .. } = &self.state {
+        if let State::MoneroLocked { .. } = &self.state {
             return Some(String::from(""));
         }
 
@@ -114,13 +103,11 @@ impl Bob {
 
 impl StateMachine for Bob {
     fn transition(&mut self, transition: Transition) -> Response {
-        match (&self.state, transition) {
-            (State::WaitingForKeys, Transition::Keys(alice_keys)) => {
-                let is_valid_keys = proof::verify(
-                    &alice_keys.proof,
-                    alice_keys.spend_bch.clone(),
-                    alice_keys.spend,
-                );
+        let current_state = self.state.clone();
+        match (current_state, transition) {
+            (State::Init, Transition::Msg0 { keys, receiving }) => {
+                let is_valid_keys =
+                    proof::verify(&keys.proof, keys.spend_bch.clone(), keys.monero_spend);
 
                 if !is_valid_keys {
                     return Response::Exit("invalid proof".to_owned());
@@ -128,84 +115,67 @@ impl StateMachine for Bob {
 
                 let contract = Contract::create(
                     1000,
-                    self.refund_bytecode.clone(),
-                    self.ves_private_key.public_key(),
-                    alice_keys.locking_bytecode.clone(),
-                    alice_keys.ves.clone(),
+                    self.bob_bch_recv.clone(),
+                    self.bob_keys.ves.public_key(),
+                    receiving.clone(),
+                    keys.ves.clone(),
                 );
 
-                self.contract = Some(contract);
-                self.state = State::WaitingForContract {
-                    alice_keys: KeyPublicWithoutProof {
-                        locking_bytecode: alice_keys.locking_bytecode,
-                        spend: alice_keys.spend,
-                        spend_bch: alice_keys.spend_bch,
-                        ves: alice_keys.ves,
-                        view: alice_keys.view,
-                    },
-                };
+                self.state = State::WithAliceKey(Value0 {
+                    alice_keys: keys.remove_proof(),
+                    alice_bch_recv: receiving,
+                    contract_pair: contract,
+                });
 
                 return Response::Ok;
             }
-
-            (
-                State::WaitingForContract { alice_keys },
-                Transition::Contract { bch_address, .. },
-            ) => {
-                if self.contract.clone().unwrap().swaplock.cash_address() != bch_address {
+            (State::WithAliceKey(props), Transition::Contract { bch_address, .. }) => {
+                if props.contract_pair.swaplock.cash_address() != bch_address {
                     return Response::Exit("contract mismatch".to_owned());
                 }
                 // todo: match for xmr. ExitCode::ContractMismatch
 
-                self.state = State::WaitingForEncSig {
-                    alice_keys: alice_keys.to_owned(),
-                };
+                self.state = State::ContractMatch(props);
                 return Response::Ok;
             }
-
-            (State::WaitingForEncSig { alice_keys }, Transition::EncSig(enc_sig)) => {
+            (State::ContractMatch(props), Transition::EncSig(enc_sig)) => {
                 // TODO:
                 // - check if enc_sig can unlock refund
                 //      - if unlocked print contract address
                 //      - if not, exit
 
-                self.state = State::WaitingForXmrUnlockedBal {
-                    alice_keys: alice_keys.to_owned(),
-                    enc_sig: enc_sig.to_owned(),
-                };
+                self.state = State::VerifiedEncSig(Value1 {
+                    alice_keys: props.alice_keys,
+                    alice_bch_recv: props.alice_bch_recv,
+                    contract_pair: props.contract_pair,
+                    enc_sig: enc_sig,
+                });
 
                 return Response::Ok;
             }
-
-            (
-                State::WaitingForXmrUnlockedBal {
-                    alice_keys,
-                    enc_sig,
-                },
-                Transition::CheckXmr,
-            ) => {
+            // the state above will give the address of SwapLock contract
+            // the user is responsible for funding it
+            // even user are not done in funding or we have insufficient confirmation
+            //      we assume that it's already done, and we proceed to waiting xmrlocked
+            (State::VerifiedEncSig(props), Transition::CheckXmr) => {
                 // Todo:
                 // - wait for contract to have correct unlocked balance
                 //      - if it has, send Swaplock enc sig
 
-                self.state = State::WaitingForDecSig {
-                    keys: alice_keys.to_owned(),
-                    enc_sig: enc_sig.to_owned(),
-                };
+                self.state = State::MoneroLocked(props);
 
                 return Response::Ok;
             }
-
-            (State::WaitingForDecSig { keys, enc_sig }, Transition::DecSig(decsig)) => {
+            (State::MoneroLocked(props), Transition::DecSig(decsig)) => {
                 self.state = State::SwapSuccess {
-                    keys: keys.to_owned(),
-                    enc_sig: enc_sig.to_owned(),
+                    keys: props.alice_keys,
+                    alice_bch_recv: props.alice_bch_recv,
+                    enc_sig: props.enc_sig,
                     decsig,
                     monero_keypair: "".to_owned(),
                 };
                 return Response::Exit("success".to_owned());
             }
-
             (_, _) => return Response::Err("invalid state-transition pair".to_owned()),
         }
     }

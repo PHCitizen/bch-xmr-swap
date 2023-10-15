@@ -13,7 +13,10 @@ pub enum Response {
 #[derive(Debug)]
 pub enum Transition {
     None,
-    Keys(KeyPublic),
+    Msg0 {
+        keys: KeyPublic,
+        receiving: Vec<u8>,
+    },
     Contract {
         bch_address: String,
         xmr_address: String,
