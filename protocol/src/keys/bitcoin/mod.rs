@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use bitcoin_hashes::Hash;
 use bitcoincash::blockdata::{opcodes::all as opcodes, script::Builder};
 use ecdsa_fun::{
@@ -5,7 +7,7 @@ use ecdsa_fun::{
     ECDSA,
 };
 use serde::{Deserialize, Serialize};
-use sigma_fun::secp256k1::fun::Point as PointP;
+use sigma_fun::secp256k1::fun::{hex::HexError, Point as PointP};
 
 use crate::utils::impl_debug_display;
 
@@ -39,6 +41,10 @@ impl_debug_display!(PublicKey);
 impl PublicKey {
     pub fn from_point(point: Point) -> Self {
         Self(point)
+    }
+
+    pub fn from_str(str: &str) -> Result<Self, HexError> {
+        Ok(Self(Point::from_str(str)?))
     }
 
     pub fn pubkey_hash(&self) -> PublicKeyHash {
