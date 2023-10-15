@@ -1,6 +1,6 @@
 use crate::{
     contract::{Contract, ContractPair},
-    keys::{KeyPublic, KeyPublicWithoutProof, Keys},
+    keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, StateMachine, Transition},
 };
@@ -62,11 +62,12 @@ pub enum State {
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Bob {
-    #[derivative(Debug = "ignore")]
-    pub keys: Keys,
+    pub monero_keypair: monero::KeyPair,
+    pub ves_private_key: bitcoin::PrivateKey,
+    pub refund_bytecode: Vec<u8>,
+
     #[derivative(Debug = "ignore")]
     pub contract: Option<ContractPair>,
-    pub refund_bch: Vec<u8>, // locking_bytecode
 
     pub xmr_amount: u64,
     pub bch_amount: u64,
@@ -74,30 +75,17 @@ pub struct Bob {
     pub state: State,
 }
 
-impl Bob {
-    pub fn new(refund_bch: Vec<u8>, xmr_amount: u64, bch_amount: u64) -> Self {
-        Self {
-            keys: Keys::random(),
-            state: State::WaitingForKeys,
-            contract: None,
-
-            refund_bch,
-            xmr_amount,
-            bch_amount,
-        }
-    }
-}
-
 // Api endpoints that will be exposed to alice
 impl Bob {
     pub fn get_keys(&self) -> Option<KeyPublic> {
         if let State::WaitingForKeys = self.state {
-            let (proof, (spend_bch, _)) = self.keys.prove();
+            let (proof, (spend_bch, _)) = proof::prove(&self.monero_keypair.spend);
+
             return Some(KeyPublic {
-                locking_bytecode: self.refund_bch.clone(),
-                ves: self.keys.ves.public_key(),
-                view: self.keys.view.clone(),
-                spend: self.keys.spend.public_key(),
+                locking_bytecode: self.refund_bytecode.clone(),
+                ves: self.ves_private_key.public_key(),
+                view: self.monero_keypair.view.to_string(),
+                spend: monero::PublicKey::from_private_key(&self.monero_keypair.spend),
                 spend_bch,
                 proof,
             });
@@ -130,10 +118,8 @@ impl StateMachine for Bob {
             (State::WaitingForKeys, Transition::Keys(alice_keys)) => {
                 let is_valid_keys = proof::verify(
                     &alice_keys.proof,
-                    (
-                        alice_keys.spend_bch.clone().into(),
-                        alice_keys.spend.clone().into(),
-                    ),
+                    alice_keys.spend_bch.clone(),
+                    alice_keys.spend,
                 );
 
                 if !is_valid_keys {
@@ -142,8 +128,8 @@ impl StateMachine for Bob {
 
                 let contract = Contract::create(
                     1000,
-                    self.refund_bch.clone(),
-                    self.keys.ves.public_key(),
+                    self.refund_bytecode.clone(),
+                    self.ves_private_key.public_key(),
                     alice_keys.locking_bytecode.clone(),
                     alice_keys.ves.clone(),
                 );

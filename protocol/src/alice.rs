@@ -1,6 +1,6 @@
 use crate::{
     contract::{Contract, ContractPair},
-    keys::{KeyPublic, KeyPublicWithoutProof, Keys},
+    keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, StateMachine, Transition},
 };
@@ -29,11 +29,12 @@ pub enum State {
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Alice {
-    #[derivative(Debug = "ignore")]
-    keys: Keys,
+    pub monero_keypair: monero::KeyPair,
+    pub ves_private_key: bitcoin::PrivateKey,
+    pub receiving_bytecode: Vec<u8>,
 
+    #[derivative(Debug = "ignore")]
     pub contract: Option<ContractPair>,
-    pub receiving_bch: Vec<u8>, // locking_bytecode
 
     pub xmr_amount: u64,
     pub bch_amount: u64,
@@ -42,28 +43,14 @@ pub struct Alice {
 }
 
 impl Alice {
-    pub fn new(receiving_bch: Vec<u8>, xmr_amount: u64, bch_amount: u64) -> Self {
-        Self {
-            keys: Keys::random(),
-            state: State::WaitingForKeys,
-            contract: None,
-
-            receiving_bch,
-            xmr_amount,
-            bch_amount,
-        }
-    }
-}
-
-impl Alice {
     pub fn get_keys(&self) -> Option<KeyPublic> {
         if let State::WaitingForKeys = self.state {
-            let (proof, (spend_bch, _)) = self.keys.prove();
+            let (proof, (spend_bch, _)) = proof::prove(&self.monero_keypair.spend);
             return Some(KeyPublic {
-                locking_bytecode: self.receiving_bch.clone(),
-                ves: self.keys.ves.public_key(),
-                view: self.keys.view.clone(),
-                spend: self.keys.spend.public_key(),
+                locking_bytecode: self.receiving_bytecode.clone(),
+                ves: self.ves_private_key.public_key(),
+                view: self.monero_keypair.view.to_string(),
+                spend: monero::PublicKey::from_private_key(&self.monero_keypair.spend),
                 spend_bch,
                 proof,
             });
@@ -95,10 +82,11 @@ impl Alice {
 impl StateMachine for Alice {
     fn transition(&mut self, transition: Transition) -> Response {
         match (&self.state, transition) {
-            (State::WaitingForKeys, Transition::Keys(keys)) => {
+            (State::WaitingForKeys, Transition::Keys(bob_keys)) => {
                 let is_valid_keys = proof::verify(
-                    &keys.proof,
-                    (keys.spend_bch.clone().into(), keys.spend.clone().into()),
+                    &bob_keys.proof,
+                    bob_keys.spend_bch.clone(), //
+                    bob_keys.spend,
                 );
 
                 if !is_valid_keys {
@@ -107,20 +95,20 @@ impl StateMachine for Alice {
 
                 let contract = Contract::create(
                     1000,
-                    keys.locking_bytecode.clone(),
-                    keys.ves.clone(),
-                    self.receiving_bch.clone(),
-                    self.keys.ves.public_key(),
+                    bob_keys.locking_bytecode.clone(),
+                    bob_keys.ves.clone(),
+                    self.receiving_bytecode.clone(),
+                    self.ves_private_key.public_key(),
                 );
 
                 self.contract = Some(contract);
                 self.state = State::WaitingForContract {
                     keys: KeyPublicWithoutProof {
-                        locking_bytecode: keys.locking_bytecode,
-                        spend: keys.spend,
-                        spend_bch: keys.spend_bch,
-                        ves: keys.ves,
-                        view: keys.view,
+                        locking_bytecode: bob_keys.locking_bytecode,
+                        spend: bob_keys.spend,
+                        spend_bch: bob_keys.spend_bch,
+                        ves: bob_keys.ves,
+                        view: bob_keys.view,
                     },
                 };
 
