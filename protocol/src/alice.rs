@@ -88,7 +88,7 @@ impl StateMachine for Alice {
                     return Response::Exit("invalid proof".to_owned());
                 }
 
-                let contract = Contract::create(
+                let contract = ContractPair::create(
                     1000,
                     receiving.clone(),
                     keys.ves.clone(),

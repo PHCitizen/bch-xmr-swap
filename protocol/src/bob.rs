@@ -113,7 +113,7 @@ impl StateMachine for Bob {
                     return Response::Exit("invalid proof".to_owned());
                 }
 
-                let contract = Contract::create(
+                let contract = ContractPair::create(
                     1000,
                     self.bob_bch_recv.clone(),
                     self.bob_keys.ves.public_key(),

@@ -1,27 +1,26 @@
 use bitcoin_hashes::{hash160, Hash};
-use bitcoincash::{
-    blockdata::{opcodes, script::Builder},
-    util::key::PublicKey,
-};
+use bitcoincash::blockdata::{opcodes, script::Builder};
 
-use crate::keys::bitcoin::address;
-
-pub struct Contract {
-    mining_fee: i64,
-    success_output: Vec<u8>,
-    pubkey_ves: PublicKey,
-    timelock: i64,
-    failed_output: Vec<u8>,
-}
+use crate::keys::bitcoin::{address, PublicKey};
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
 
+#[derive(Debug, Clone)]
+pub struct Contract {
+    pub mining_fee: i64,
+    pub success_output: Vec<u8>,
+    pub pubkey_ves: PublicKey,
+    pub timelock: i64,
+    pub failed_output: Vec<u8>,
+}
+
 impl Contract {
     pub fn script(&self) -> Vec<u8> {
+        let pubkey = bitcoincash::PublicKey::from_slice(&self.pubkey_ves.to_bytes()).unwrap();
         let mut contract = Builder::new()
             .push_slice(&self.failed_output)
             .push_int(self.timelock)
-            .push_key(&self.pubkey_ves)
+            .push_key(&pubkey)
             .push_slice(&self.success_output)
             .push_int(self.mining_fee)
             .into_script()
@@ -62,10 +61,43 @@ impl Contract {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ContractPair {
+    pub swaplock: Contract,
+    pub refund: Contract,
+}
+
+impl ContractPair {
+    pub fn create(
+        mining_fee: i64,
+        bob_receiving: Vec<u8>,
+        bob_pubkey_ves: PublicKey,
+        alice_receiving: Vec<u8>,
+        alice_pubkey_ves: PublicKey,
+    ) -> ContractPair {
+        let refund = Contract {
+            mining_fee,
+            success_output: bob_receiving,
+            pubkey_ves: alice_pubkey_ves,
+            timelock: 0,
+            failed_output: alice_receiving.clone(),
+        };
+
+        let swaplock = Contract {
+            mining_fee,
+            success_output: alice_receiving,
+            pubkey_ves: bob_pubkey_ves,
+            timelock: 0,
+            failed_output: refund.locking_script(),
+        };
+
+        ContractPair { swaplock, refund }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use bitcoincash::PublicKey;
-    use std::str::FromStr;
+    use crate::keys::bitcoin::PublicKey;
 
     use crate::contract::Contract;
 
