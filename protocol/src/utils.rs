@@ -21,14 +21,6 @@ macro_rules! impl_debug_display {
 
 pub(crate) use impl_debug_display;
 
-pub fn dbg_hexlify<T: AsRef<[u8]>>(
-    slice: &T,
-    f: &mut std::fmt::Formatter,
-) -> Result<(), std::fmt::Error> {
-    let hexlify = hex::encode(slice);
-    f.write_str(&hexlify)
-}
-
 pub fn monero_priv_ser<S>(privkey: &monero::PrivateKey, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
