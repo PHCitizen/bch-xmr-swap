@@ -1,13 +1,32 @@
-use std::str::FromStr;
+//! >> Keywords <<
+//!     -> PrevTransition - The transition that makes the state-machine move to current state
+//!     -> OEW (On Enter the Watcher) - If we enter to this state, the watcher must...
+//!
+//! >> State <<
+//!     Init
+//!     WithBobKeys
+//!         -> Bob are able to get contract
+//!     ContractMatch
+//!         -> OEW
+//!             -> Watch the SwapLock contract if it receive tx with correct amount
+//!                 Watch that tx for BCH_MIN_CONFIRMATION
+//!                 If BCH_MIN_CONFIRMATION satisfied, Transition::BchLockVerified
+//!         -> Bob are able to get refund encrypted signature
+//!     BchLocked
+//!         -> OEW
+//!             -> Must send the XMR to shared address
+//!     ValidEncSig
+//!         -> Alice can get swap_tx and broadcast it
+//!
 
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
-use bitcoincash::{OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut, Txid};
-use ecdsa_fun::adaptor::EncryptedSignature;
-use hex::ToHex;
+use bitcoincash::{
+    consensus::Encodable, OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
+};
+use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 
 use crate::{
     adaptor_signature::AdaptorSignature,
-    blockchain::{BchProvider, BCH_MIN_CONFIRMATION},
     contract::ContractPair,
     keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
     proof,
@@ -36,13 +55,25 @@ pub struct Value1 {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Value2 {
+    bob_keys: KeyPublicWithoutProof,
+    bob_bch_recv: Vec<u8>,
+    contract_pair: ContractPair,
+    shared_keypair: monero::ViewPair,
+    spend_bch: bitcoin::PublicKey,
+    outpoint: OutPoint,
+
+    dec_sig: Signature,
+}
+
+#[derive(Debug, Clone)]
 pub enum State {
     Init,
     WithBobKeys(Value0),
     ContractMatch(Value0),
     BchLocked(Value1),
-    SwapSuccess { txhash: String },
-    SwapFailed,
+    ValidEncSig(Value2),
 }
 
 // Api endpoints that will be exposed to bob
@@ -75,6 +106,41 @@ impl Swap<State> {
         }
 
         return None;
+    }
+}
+
+// private api
+impl Swap<State> {
+    pub fn get_swap_tx(&self) -> Option<Vec<u8>> {
+        if let State::ValidEncSig(props) = &self.state {
+            let unlocker = props
+                .contract_pair
+                .swaplock
+                .unlocking_script(&props.dec_sig.to_bytes());
+
+            let mut buffer = Vec::new();
+            Transaction {
+                version: 2,
+                lock_time: PackedLockTime(812991),
+                input: vec![TxIn {
+                    sequence: Sequence(0),
+                    previous_output: props.outpoint,
+                    script_sig: Script::from(unlocker),
+                    ..Default::default()
+                }],
+                output: vec![TxOut {
+                    value: self.bch_amount.to_sat(),
+                    script_pubkey: self.bch_recv.clone(),
+                    token: None,
+                }],
+            }
+            .consensus_encode(&mut buffer)
+            .expect("cannot encode tx");
+
+            return Some(buffer);
+        }
+
+        None
     }
 }
 
@@ -133,53 +199,7 @@ impl Swap<State> {
                 return Ok(Response::Ok);
             }
 
-            (State::ContractMatch(props), Transition::CheckBch) => {
-                // check if the address has right amount of locked bch
-                let transactions = self
-                    .bch_provider
-                    .get_address_history(&props.contract_pair.swaplock.cash_address())
-                    .await?
-                    .result;
-
-                let mut outpoint: Option<OutPoint> = None;
-                for transaction in transactions {
-                    let tx = self.bch_provider.get_tx(&transaction.tx_hash).await?.result;
-
-                    if tx.confirmations < BCH_MIN_CONFIRMATION {
-                        continue;
-                    }
-
-                    for vout in tx.vout {
-                        if vout.value == self.bch_amount
-                            && vout.script_pub_key.hex
-                                == props
-                                    .contract_pair
-                                    .swaplock
-                                    .locking_script()
-                                    .encode_hex::<String>()
-                        {
-                            // someone send right amount of bch to contract
-                            outpoint = Some(OutPoint {
-                                txid: Txid::from_str(&tx.hash).unwrap(),
-                                vout: vout.n,
-                            });
-                            break;
-                        }
-                    }
-                }
-
-                if outpoint.is_none() {
-                    return Ok(Response::Ok);
-                }
-
-                println!("=============================");
-                println!(
-                    "Send XMR here: {} Amount: {}",
-                    monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair),
-                    self.xmr_amount
-                );
-                println!("=============================");
-
+            (State::ContractMatch(props), Transition::BchLockVerified(outpoint)) => {
                 self.state = State::BchLocked(Value1 {
                     bob_keys: props.bob_keys,
                     bob_bch_recv: props.bob_bch_recv,
@@ -187,8 +207,7 @@ impl Swap<State> {
                     shared_keypair: props.shared_keypair,
                     spend_bch: props.spend_bch,
 
-                    // Above must check that outpoint not None
-                    outpoint: outpoint.unwrap(),
+                    outpoint,
                 });
                 return Ok(Response::Ok);
             }
@@ -208,31 +227,16 @@ impl Swap<State> {
                     // Todo: procceed to refund
                 }
 
-                let unlocker = props
-                    .contract_pair
-                    .swaplock
-                    .unlocking_script(&dec_sig.to_bytes());
-
-                let transaction = Transaction {
-                    version: 2,
-                    lock_time: PackedLockTime(812991),
-                    input: vec![TxIn {
-                        sequence: Sequence(0),
-                        previous_output: props.outpoint,
-                        script_sig: Script::from(unlocker),
-                        ..Default::default()
-                    }],
-                    output: vec![TxOut {
-                        value: self.bch_amount.to_sat(),
-                        script_pubkey: self.bch_recv.clone(),
-                        token: None,
-                    }],
-                };
-
-                let txhash = self.bch_provider.broadcast(transaction).await?;
-
-                self.state = State::SwapSuccess { txhash };
-                return Ok(Response::Exit("Success".to_owned()));
+                self.state = State::ValidEncSig(Value2 {
+                    bob_keys: props.bob_keys,
+                    bob_bch_recv: props.bob_bch_recv,
+                    contract_pair: props.contract_pair,
+                    shared_keypair: props.shared_keypair,
+                    spend_bch: props.spend_bch,
+                    outpoint: props.outpoint,
+                    dec_sig,
+                });
+                return Ok(Response::Ok);
             }
             (_, _) => return Ok(Response::Err("invalid state-transition pair".to_owned())),
         }
