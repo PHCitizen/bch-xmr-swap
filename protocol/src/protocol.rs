@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::str::FromStr;
 
+use bitcoincash::OutPoint;
 use derivative::Derivative;
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use monero::Address;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     blockchain::{types, BCH_MIN_CONFIRMATION},
@@ -10,13 +12,28 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub enum Response {
-    Ok,
-    Err(String),
-    Exit(String),
+pub enum ResponseError {
+    InvalidStateTransition,
+    InvalidTransaction,
+    InvalidBchAddress,
+    InvalidXmrAddress,
 }
 
 #[derive(Debug)]
+pub enum Response {
+    Ok,
+    Err(ResponseError),
+    Exit(String),
+    Done,
+
+    /// if you receive this response,
+    /// you must check if it has valid output address and confirmation.
+    ///
+    /// If it does `Transition::BchLockVerified`
+    WatchBchTx(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Transition {
     Msg0 {
         keys: KeyPublic,
@@ -30,9 +47,9 @@ pub enum Transition {
     EncSig(EncryptedSignature),
     DecSig(Signature),
 
-    /// The user of this transition must check if the contract
-    /// received exact amount and confirmation
-    BchLockVerified(bitcoincash::OutPoint),
+    /// You are responsible to only use on confirmed tx
+    #[serde(skip)]
+    BchConfirmedTx(bitcoincash::Transaction),
 
     /// The user of this transition must check if the shared address
     /// received exact amount that is already spendable or 'unlocked'
@@ -75,4 +92,22 @@ pub fn tx_has_correct_amount_and_conf(
     }
 
     return false;
+}
+
+fn ser_outpoint<S>(outpoint: &OutPoint, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(&outpoint.to_string())
+}
+
+fn deser_outpoint<'de, D>(deserializer: D) -> Result<OutPoint, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    String::deserialize(deserializer).and_then(|string| {
+        OutPoint::from_str(&string).map_err(|err| Error::custom(err.to_string()))
+    })
 }

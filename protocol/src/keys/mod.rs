@@ -29,17 +29,6 @@ impl KeyPrivate {
             ves: bitcoin::PrivateKey::random(),
         }
     }
-
-    pub fn to_public(&self) -> KeyPublic {
-        let (proof, (spend_bch, _)) = proof::prove(&self.monero_spend);
-        KeyPublic {
-            monero_spend: monero::PublicKey::from_private_key(&self.monero_spend),
-            monero_view: self.monero_view,
-            ves: self.ves.public_key(),
-            spend_bch,
-            proof,
-        }
-    }
 }
 
 #[derive(Derivative, Clone, Serialize, Deserialize)]
@@ -56,13 +45,15 @@ pub struct KeyPublic {
     pub proof: CrossCurveDLEQProof,
 }
 
-impl KeyPublic {
-    pub fn remove_proof(&self) -> KeyPublicWithoutProof {
-        KeyPublicWithoutProof {
-            monero_spend: self.monero_spend,
-            monero_view: self.monero_view,
-            ves: self.ves.clone(),
-            spend_bch: self.spend_bch.clone(),
+impl From<KeyPrivate> for KeyPublic {
+    fn from(value: KeyPrivate) -> Self {
+        let (proof, (spend_bch, _)) = proof::prove(&value.monero_spend);
+        KeyPublic {
+            monero_spend: monero::PublicKey::from_private_key(&value.monero_spend),
+            monero_view: value.monero_view,
+            ves: value.ves.public_key(),
+            spend_bch,
+            proof,
         }
     }
 }
@@ -76,6 +67,17 @@ pub struct KeyPublicWithoutProof {
     pub ves: bitcoin::PublicKey,
 
     pub spend_bch: bitcoin::PublicKey,
+}
+
+impl From<KeyPublic> for KeyPublicWithoutProof {
+    fn from(value: KeyPublic) -> Self {
+        KeyPublicWithoutProof {
+            monero_spend: value.monero_spend,
+            monero_view: value.monero_view,
+            ves: value.ves,
+            spend_bch: value.spend_bch,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ use crate::{
     contract::ContractPair,
     keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Response, Swap, Transition},
+    protocol::{Response, ResponseError, Swap, Transition},
 };
 
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ pub enum State {
 // Api endpoints that will be exposed to alice
 impl Swap<State> {
     pub fn get_keys(&self) -> KeyPublic {
-        self.keys.to_public()
+        KeyPublic::from(self.keys.clone())
     }
 
     pub fn contract(&self) -> Option<(String, monero::Address)> {
@@ -105,9 +105,7 @@ impl Swap<State> {
 }
 
 impl Swap<State> {
-    /// Ok variant can contain handled/known error
-    /// Err variant has unhandle/internal error
-    pub async fn transition(&mut self, transition: Transition) -> anyhow::Result<Response> {
+    pub async fn transition(&mut self, transition: Transition) -> Response {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
@@ -115,7 +113,7 @@ impl Swap<State> {
                     proof::verify(&keys.proof, keys.spend_bch.clone(), keys.monero_spend);
 
                 if !is_valid_keys {
-                    return Ok(Response::Exit("invalid proof".to_owned()));
+                    return Response::Exit("invalid proof".to_owned());
                 }
 
                 let contract_pair = ContractPair::create(
@@ -127,7 +125,6 @@ impl Swap<State> {
                 );
 
                 self.state = State::WithAliceKey(Value0 {
-                    alice_keys: keys.remove_proof(),
                     alice_bch_recv: receiving,
                     contract_pair,
 
@@ -136,10 +133,11 @@ impl Swap<State> {
                         spend: monero::PublicKey::from_private_key(&self.keys.monero_spend)
                             + keys.monero_spend,
                     },
-                    spend_bch: keys.spend_bch,
+                    spend_bch: keys.spend_bch.clone(),
+                    alice_keys: keys.into(),
                 });
 
-                return Ok(Response::Ok);
+                return Response::Ok;
             }
             (
                 State::WithAliceKey(props),
@@ -149,17 +147,17 @@ impl Swap<State> {
                 },
             ) => {
                 if props.contract_pair.swaplock.cash_address() != bch_address {
-                    return Ok(Response::Exit("bch address not match".to_owned()));
+                    return Response::Err(ResponseError::InvalidBchAddress);
                 }
 
                 let xmr_derived =
                     monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
-                    return Ok(Response::Exit("xmr address not match".to_owned()));
+                    return Response::Err(ResponseError::InvalidXmrAddress);
                 }
 
                 self.state = State::ContractMatch(props);
-                return Ok(Response::Ok);
+                return Response::Ok;
             }
 
             (State::ContractMatch(props), Transition::EncSig(enc_sig)) => {
@@ -174,7 +172,7 @@ impl Swap<State> {
                 );
 
                 if !is_valid {
-                    return Ok(Response::Exit("Invalid signature".to_owned()));
+                    return Response::Exit("Invalid signature".to_owned());
                 }
 
                 self.state = State::VerifiedEncSig(Value1 {
@@ -186,7 +184,7 @@ impl Swap<State> {
                     // refund_unlocker: dec_sig,
                 });
 
-                return Ok(Response::Ok);
+                return Response::Ok;
             }
 
             (State::VerifiedEncSig(props), Transition::XmrLockVerified(restore_height)) => {
@@ -199,7 +197,7 @@ impl Swap<State> {
                     // refund_unlocker: props.refund_unlocker,
                     restore_height,
                 });
-                return Ok(Response::Ok);
+                return Response::Ok;
             }
 
             (State::MoneroLocked(props), Transition::DecSig(decsig)) => {
@@ -217,9 +215,9 @@ impl Swap<State> {
 
                 self.state = State::SwapSuccess(key_pair, props.restore_height);
 
-                return Ok(Response::Exit("success".to_owned()));
+                return Response::Done;
             }
-            (_, _) => return Ok(Response::Err("invalid state-transition pair".to_owned())),
-        }
+            (_, _) => return Response::Err(ResponseError::InvalidStateTransition),
+        };
     }
 }

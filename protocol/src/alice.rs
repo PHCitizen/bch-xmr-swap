@@ -30,7 +30,7 @@ use crate::{
     contract::ContractPair,
     keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Response, Swap, Transition},
+    protocol::{Response, ResponseError, Swap, Transition},
 };
 
 #[derive(Debug, Clone)]
@@ -79,7 +79,7 @@ pub enum State {
 // Api endpoints that will be exposed to bob
 impl Swap<State> {
     pub fn get_keys(&self) -> KeyPublic {
-        self.keys.to_public()
+        KeyPublic::from(self.keys.clone())
     }
 
     pub fn contract(&self) -> Option<(String, monero::Address)> {
@@ -145,15 +145,14 @@ impl Swap<State> {
 }
 
 impl Swap<State> {
-    pub async fn transition(&mut self, transition: Transition) -> anyhow::Result<Response> {
+    pub async fn transition(&mut self, transition: Transition) -> Response {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
                 let is_valid_keys =
                     proof::verify(&keys.proof, keys.spend_bch.clone(), keys.monero_spend);
-
                 if !is_valid_keys {
-                    return Ok(Response::Exit("invalid proof".to_owned()));
+                    return Response::Exit("invalid proof".to_owned());
                 }
 
                 let contract = ContractPair::create(
@@ -165,7 +164,7 @@ impl Swap<State> {
                 );
 
                 self.state = State::WithBobKeys(Value0 {
-                    bob_keys: keys.remove_proof(),
+                    spend_bch: keys.spend_bch.clone(),
                     bob_bch_recv: receiving,
                     contract_pair: contract,
                     shared_keypair: monero::ViewPair {
@@ -173,10 +172,10 @@ impl Swap<State> {
                         spend: monero::PublicKey::from_private_key(&self.keys.monero_spend)
                             + keys.monero_spend,
                     },
-                    spend_bch: keys.spend_bch,
+                    bob_keys: keys.into(),
                 });
 
-                return Ok(Response::Ok);
+                return Response::Ok;
             }
             (
                 State::WithBobKeys(props),
@@ -186,45 +185,64 @@ impl Swap<State> {
                 },
             ) => {
                 if props.contract_pair.swaplock.cash_address() != bch_address {
-                    return Ok(Response::Exit("bch address not match".to_owned()));
+                    return Response::Err(ResponseError::InvalidBchAddress);
                 }
 
                 let xmr_derived =
                     monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
-                    return Ok(Response::Exit("xmr address not match".to_owned()));
+                    return Response::Err(ResponseError::InvalidXmrAddress);
                 }
 
                 self.state = State::ContractMatch(props);
-                return Ok(Response::Ok);
+                return Response::WatchBchTx(bch_address);
             }
 
-            (State::ContractMatch(props), Transition::BchLockVerified(outpoint)) => {
-                self.state = State::BchLocked(Value1 {
-                    bob_keys: props.bob_keys,
-                    bob_bch_recv: props.bob_bch_recv,
-                    contract_pair: props.contract_pair,
-                    shared_keypair: props.shared_keypair,
-                    spend_bch: props.spend_bch,
+            (State::ContractMatch(props), Transition::BchConfirmedTx(transaction)) => {
+                let mut outpoint = None;
+                for (vout, txout) in transaction.output.iter().enumerate() {
+                    if txout.value == self.bch_amount.to_sat()
+                        && txout.script_pubkey.to_string()
+                            == props.contract_pair.swaplock.cash_address()
+                    {
+                        outpoint = Some(bitcoincash::OutPoint {
+                            txid: transaction.txid(),
+                            vout: vout as u32,
+                        });
+                        break;
+                    }
+                }
 
-                    outpoint,
-                });
-                return Ok(Response::Ok);
+                match outpoint {
+                    None => return Response::Err(ResponseError::InvalidTransaction),
+                    Some(outpoint) => {
+                        self.state = State::BchLocked(Value1 {
+                            bob_keys: props.bob_keys,
+                            bob_bch_recv: props.bob_bch_recv,
+                            contract_pair: props.contract_pair,
+                            shared_keypair: props.shared_keypair,
+                            spend_bch: props.spend_bch,
+
+                            outpoint,
+                        });
+                        return Response::Ok;
+                    }
+                };
             }
             (State::BchLocked(props), Transition::EncSig(encsig)) => {
-                let bob_receiving_hash = sha256::hash(&self.bch_recv.to_bytes());
                 let dec_sig =
                     AdaptorSignature::decrypt_signature(&self.keys.monero_spend, encsig.clone());
 
-                let is_valid = AdaptorSignature::verify(
-                    props.bob_keys.ves.clone(),
-                    bob_receiving_hash.as_byte_array(),
-                    &dec_sig,
-                );
+                {
+                    // ? Check if the message by bob can unlock the swaplock contract
+                    let alice_recv_hash = sha256::hash(&self.bch_recv.to_bytes());
+                    let signer = props.bob_keys.ves.clone();
+                    let message = alice_recv_hash.to_byte_array();
 
-                if !is_valid {
-                    return Ok(Response::Exit("Invalid signature".to_owned()));
-                    // Todo: procceed to refund
+                    if !AdaptorSignature::verify(signer, &message, &dec_sig) {
+                        return Response::Exit("Invalid signature".to_owned());
+                        // Todo: procceed to refund
+                    }
                 }
 
                 self.state = State::ValidEncSig(Value2 {
@@ -236,9 +254,9 @@ impl Swap<State> {
                     outpoint: props.outpoint,
                     dec_sig,
                 });
-                return Ok(Response::Ok);
+                return Response::Done;
             }
-            (_, _) => return Ok(Response::Err("invalid state-transition pair".to_owned())),
+            (_, _) => return Response::Err(ResponseError::InvalidStateTransition),
         }
     }
 }

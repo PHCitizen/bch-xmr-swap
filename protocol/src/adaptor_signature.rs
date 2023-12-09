@@ -96,9 +96,9 @@ mod test {
     #[test]
     fn test() {
         let bob = keys::KeyPrivate::random();
-        let bobpub = bob.to_public();
+        let bobpub = keys::KeyPublic::from(bob.clone());
         let alice = keys::KeyPrivate::random();
-        let alicepub = alice.to_public();
+        let alicepub = keys::KeyPublic::from(alice.clone());
         let message = [0u8; 32];
 
         // bob signed alice output
