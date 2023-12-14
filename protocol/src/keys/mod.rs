@@ -9,24 +9,26 @@ use crate::{
     utils::{monero_priv_deser, monero_priv_ser},
 };
 
+use self::bitcoin::random_private_key;
+
 pub mod bitcoin;
 
 #[derive(Debug, Clone)]
 pub struct KeyPrivate {
     pub monero_spend: monero::PrivateKey,
     pub monero_view: monero::PrivateKey,
-    pub ves: bitcoin::PrivateKey,
+    pub ves: bitcoincash::PrivateKey,
 }
 
 impl KeyPrivate {
-    pub fn random() -> KeyPrivate {
+    pub fn random(network: bitcoin::Network) -> KeyPrivate {
         let mut rng = rand::thread_rng();
         let monero_spend = Scalar::random(&mut rng);
         let monero_view = Scalar::random(&mut rng);
         Self {
             monero_spend: monero::PrivateKey::from_slice(monero_spend.as_bytes()).unwrap(),
             monero_view: monero::PrivateKey::from_slice(monero_view.as_bytes()).unwrap(),
-            ves: bitcoin::PrivateKey::random(),
+            ves: random_private_key(network),
         }
     }
 }
@@ -38,9 +40,9 @@ pub struct KeyPublic {
     #[rustfmt::skip]
     #[serde(serialize_with = "monero_priv_ser",deserialize_with = "monero_priv_deser")]
     pub monero_view: monero::PrivateKey,
-    pub ves: bitcoin::PublicKey,
+    pub ves: bitcoincash::PublicKey,
 
-    pub spend_bch: bitcoin::PublicKey,
+    pub spend_bch: bitcoincash::PublicKey,
     #[derivative(Debug = "ignore")]
     pub proof: CrossCurveDLEQProof,
 }
@@ -48,10 +50,11 @@ pub struct KeyPublic {
 impl From<KeyPrivate> for KeyPublic {
     fn from(value: KeyPrivate) -> Self {
         let (proof, (spend_bch, _)) = proof::prove(&value.monero_spend);
+        let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
         KeyPublic {
             monero_spend: monero::PublicKey::from_private_key(&value.monero_spend),
             monero_view: value.monero_view,
-            ves: value.ves.public_key(),
+            ves: value.ves.public_key(&secp),
             spend_bch,
             proof,
         }
@@ -64,9 +67,9 @@ pub struct KeyPublicWithoutProof {
     #[rustfmt::skip]
     #[serde(serialize_with = "monero_priv_ser",deserialize_with = "monero_priv_deser")]
     pub monero_view: monero::PrivateKey,
-    pub ves: bitcoin::PublicKey,
+    pub ves: bitcoincash::PublicKey,
 
-    pub spend_bch: bitcoin::PublicKey,
+    pub spend_bch: bitcoincash::PublicKey,
 }
 
 impl From<KeyPublic> for KeyPublicWithoutProof {

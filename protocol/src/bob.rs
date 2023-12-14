@@ -23,7 +23,7 @@ use ecdsa_fun::adaptor::EncryptedSignature;
 use crate::{
     adaptor_signature::AdaptorSignature,
     contract::ContractPair,
-    keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
+    keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, ResponseError, Swap, Transition},
 };
@@ -35,7 +35,7 @@ pub struct Value0 {
     contract_pair: ContractPair,
 
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ pub struct Value1 {
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
 }
 
@@ -54,7 +54,7 @@ pub struct Value2 {
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
     restore_height: u64,
 }
@@ -116,10 +116,11 @@ impl Swap<State> {
                     return Response::Exit("invalid proof".to_owned());
                 }
 
+                let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
                 let contract_pair = ContractPair::create(
                     1000,
                     self.bch_recv.clone().into_bytes(),
-                    self.keys.ves.public_key(),
+                    self.keys.ves.public_key(&secp),
                     receiving.clone(),
                     keys.ves.clone(),
                 );

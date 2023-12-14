@@ -1,7 +1,7 @@
 use bitcoin_hashes::{hash160, Hash};
 use bitcoincash::blockdata::{opcodes, script::Builder};
 
-use crate::keys::bitcoin::{address, PublicKey};
+use crate::keys::bitcoin::address;
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
 
@@ -9,7 +9,7 @@ const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d0
 pub struct Contract {
     pub mining_fee: i64,
     pub success_output: Vec<u8>,
-    pub pubkey_ves: PublicKey,
+    pub pubkey_ves: bitcoincash::PublicKey,
     pub timelock: i64,
     pub failed_output: Vec<u8>,
 }
@@ -71,9 +71,9 @@ impl ContractPair {
     pub fn create(
         mining_fee: i64,
         bob_receiving: Vec<u8>,
-        bob_pubkey_ves: PublicKey,
+        bob_pubkey_ves: bitcoincash::PublicKey,
         alice_receiving: Vec<u8>,
-        alice_pubkey_ves: PublicKey,
+        alice_pubkey_ves: bitcoincash::PublicKey,
     ) -> ContractPair {
         let refund = Contract {
             mining_fee,
@@ -97,13 +97,13 @@ impl ContractPair {
 
 #[cfg(test)]
 mod test {
-    use crate::keys::bitcoin::PublicKey;
+    use std::str::FromStr;
 
     use crate::contract::Contract;
 
     #[test]
     fn should_have_correct_address() {
-        let pubkey_ves = PublicKey::from_str(
+        let pubkey_ves = bitcoincash::PublicKey::from_str(
             "02ee2cbe75e3d2a9b5049ac73122c229627a49bd289f71e05075b2c60090766128",
         )
         .unwrap();

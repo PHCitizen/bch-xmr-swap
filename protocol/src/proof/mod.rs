@@ -10,8 +10,6 @@ use sigma_fun::{
     HashTranscript,
 };
 
-use crate::keys::bitcoin;
-
 pub static CROSS_CURVE_PROOF_SYSTEM: Lazy<
     CrossCurveDLEQ<HashTranscript<Sha256, rand_chacha::ChaCha20Rng>>,
 > = Lazy::new(|| {
@@ -23,7 +21,10 @@ pub static CROSS_CURVE_PROOF_SYSTEM: Lazy<
 
 pub fn prove(
     privkey: &monero::PrivateKey,
-) -> (CrossCurveDLEQProof, (bitcoin::PublicKey, monero::PublicKey)) {
+) -> (
+    CrossCurveDLEQProof,
+    (bitcoincash::PublicKey, monero::PublicKey),
+) {
     let mut rng = rand::thread_rng();
     let scalar = ScalarDalek::from_bytes_mod_order(privkey.to_bytes());
     let (proof, (point, ed_point)) =
@@ -32,7 +33,7 @@ pub fn prove(
     (
         proof,
         (
-            bitcoin::PublicKey::from_point(point),
+            bitcoincash::PublicKey::from_slice(&point.to_bytes()).unwrap(),
             monero::PublicKey::from_slice(ed_point.compress().as_bytes()).unwrap(),
         ),
     )
@@ -40,10 +41,10 @@ pub fn prove(
 
 pub fn verify(
     proof: &CrossCurveDLEQProof,
-    bch: crate::keys::bitcoin::PublicKey,
+    bch: bitcoincash::PublicKey,
     xmr_pubkey: monero::PublicKey,
 ) -> bool {
-    let point = PointP::from_bytes(bch.to_bytes()).unwrap();
+    let point = PointP::from_bytes(bch.inner.serialize()).unwrap();
     let edward_point = CompressedEdwardsY::from_slice(xmr_pubkey.as_bytes())
         .decompress()
         .unwrap();

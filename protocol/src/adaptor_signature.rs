@@ -12,33 +12,31 @@ use sha2::Sha256;
 use sigma_fun::ed25519::curve25519_dalek::scalar::Scalar as ScalarDalek;
 use sigma_fun::HashTranscript;
 
-use crate::keys::bitcoin;
-
 type Transcript = HashTranscript<Sha256, rand_chacha::ChaCha20Rng>;
 type NonceGen = Deterministic<Sha256>;
 
 pub struct AdaptorSignature;
 
 impl AdaptorSignature {
-    pub fn verify(signer: bitcoin::PublicKey, message: &[u8; 32], sig: &Signature) -> bool {
+    pub fn verify(signer: bitcoincash::PublicKey, message: &[u8; 32], sig: &Signature) -> bool {
         let ecdsa: ecdsa_fun::ECDSA<Deterministic<Sha256>> = ecdsa_fun::ECDSA::default();
 
-        let s_monero_bch = Point::from_bytes(signer.to_bytes()).unwrap();
+        let s_monero_bch = Point::from_bytes(signer.inner.serialize()).unwrap();
         ecdsa.verify(&s_monero_bch, &message, &sig)
     }
 
     pub fn encrypted_sign(
-        signer: &bitcoin::PrivateKey,
-        encryption_key: &bitcoin::PublicKey,
+        signer: &bitcoincash::PrivateKey,
+        encryption_key: &bitcoincash::PublicKey,
         message: &[u8; 32],
     ) -> EncryptedSignature {
         let adaptor: Adaptor<Transcript, NonceGen> = Adaptor::default();
-        let signer = ecdsa_fun::fun::Scalar::from_bytes(signer.to_bytes())
+        let signer = ecdsa_fun::fun::Scalar::from_bytes(signer.inner.secret_bytes())
             .expect("failed to convert PrivateKey -> Scalar")
             .non_zero()
             .expect("failed to convert PrivateKey -> Scalar. non-zero");
 
-        let encryption_key = fun::Point::from_bytes(encryption_key.to_bytes())
+        let encryption_key = fun::Point::from_bytes(encryption_key.inner.serialize())
             .expect("failed to convert PublicKey -> Point");
 
         adaptor.encrypted_sign(&signer, &encryption_key, &message)
@@ -57,12 +55,12 @@ impl AdaptorSignature {
     }
 
     pub fn recover_decryption_key(
-        pubkey: bitcoin::PublicKey,
+        pubkey: bitcoincash::PublicKey,
         sig: Signature,
         enc_sig: EncryptedSignature,
     ) -> monero::PrivateKey {
         let adaptor: Adaptor<Transcript, NonceGen> = Adaptor::default();
-        let pubkey: Point = fun::Point::from_bytes(pubkey.to_bytes())
+        let pubkey: Point = fun::Point::from_bytes(pubkey.inner.serialize())
             .expect("failed to convert PublicKey -> Point");
 
         let key_reversed = adaptor
@@ -95,9 +93,9 @@ mod test {
 
     #[test]
     fn test() {
-        let bob = keys::KeyPrivate::random();
+        let bob = keys::KeyPrivate::random(keys::bitcoin::Network::Testnet);
         let bobpub = keys::KeyPublic::from(bob.clone());
-        let alice = keys::KeyPrivate::random();
+        let alice = keys::KeyPrivate::random(keys::bitcoin::Network::Testnet);
         let alicepub = keys::KeyPublic::from(alice.clone());
         let message = [0u8; 32];
 

@@ -1,94 +1,21 @@
-use std::str::FromStr;
-
-use bitcoin_hashes::Hash;
-use bitcoincash::blockdata::{opcodes::all as opcodes, script::Builder};
-use ecdsa_fun::{
-    fun::{Point, Scalar},
-    ECDSA,
-};
-use serde::{Deserialize, Serialize};
-use sigma_fun::secp256k1::fun::{hex::HexError, Point as PointP};
-
-use crate::utils::impl_debug_display;
+use ecdsa_fun::fun::Scalar;
 
 pub mod address;
 
-#[derive(Clone)]
-pub struct PrivateKey(Scalar);
-impl_debug_display!(PrivateKey);
-
-impl PrivateKey {
-    pub fn random() -> Self {
-        let mut rng = rand::thread_rng();
-        PrivateKey(Scalar::random(&mut rng))
-    }
-
-    pub fn public_key(&self) -> PublicKey {
-        let ecdsa = ECDSA::<()>::default();
-        let public = ecdsa.verification_key_for(&self.0);
-        PublicKey(public)
-    }
-
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.to_bytes()
-    }
+pub enum Network {
+    Mainnet,
+    Testnet,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct PublicKey(Point);
-impl_debug_display!(PublicKey);
+pub fn random_private_key(network: Network) -> bitcoincash::PrivateKey {
+    let mut rng = rand::thread_rng();
+    let scalar = Scalar::random(&mut rng);
 
-impl PublicKey {
-    pub fn from_point(point: Point) -> Self {
-        Self(point)
-    }
-
-    pub fn from_str(str: &str) -> Result<Self, HexError> {
-        Ok(Self(Point::from_str(str)?))
-    }
-
-    pub fn pubkey_hash(&self) -> PublicKeyHash {
-        let hash = bitcoin_hashes::hash160::Hash::hash(&self.0.to_bytes()).to_byte_array();
-        PublicKeyHash(hash)
-    }
-
-    pub fn to_bytes(&self) -> [u8; 33] {
-        self.0.to_bytes()
-    }
-}
-
-impl From<PointP> for PublicKey {
-    fn from(value: PointP) -> Self {
-        let little_endian_bytes = value.to_bytes();
-        PublicKey(Point::from_bytes(little_endian_bytes).unwrap())
-    }
-}
-
-impl Into<PointP> for PublicKey {
-    fn into(self) -> PointP {
-        PointP::from_bytes(self.to_bytes()).unwrap()
-    }
-}
-
-pub struct PublicKeyHash([u8; 20]);
-impl_debug_display!(PublicKeyHash);
-
-impl PublicKeyHash {
-    pub fn to_bytes(&self) -> [u8; 20] {
-        self.0
-    }
-
-    #[allow(non_snake_case)]
-    pub fn P2PKH_locking_bytecode(&self) -> Vec<u8> {
-        Builder::new()
-            .push_opcode(opcodes::OP_DUP)
-            .push_opcode(opcodes::OP_HASH160)
-            .push_slice(&self.0)
-            .push_opcode(opcodes::OP_EQUALVERIFY)
-            .push_opcode(opcodes::OP_CHECKSIG)
-            .into_script()
-            .to_bytes()
-    }
+    let network = match network {
+        Network::Mainnet => bitcoincash::Network::Bitcoin,
+        Network::Testnet => bitcoincash::Network::Testnet,
+    };
+    bitcoincash::PrivateKey::from_slice(&scalar.to_bytes(), network).unwrap()
 }
 
 // #[test]

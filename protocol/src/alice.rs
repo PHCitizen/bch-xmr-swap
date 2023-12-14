@@ -28,7 +28,7 @@ use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use crate::{
     adaptor_signature::AdaptorSignature,
     contract::ContractPair,
-    keys::{bitcoin, KeyPublic, KeyPublicWithoutProof},
+    keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, ResponseError, Swap, Transition},
 };
@@ -40,7 +40,7 @@ pub struct Value0 {
     contract_pair: ContractPair,
 
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ pub struct Value1 {
     bob_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
 
     outpoint: OutPoint,
 }
@@ -61,7 +61,7 @@ pub struct Value2 {
     bob_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoin::PublicKey,
+    spend_bch: bitcoincash::PublicKey,
     outpoint: OutPoint,
 
     dec_sig: Signature,
@@ -155,12 +155,13 @@ impl Swap<State> {
                     return Response::Exit("invalid proof".to_owned());
                 }
 
+                let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
                 let contract = ContractPair::create(
                     1000,
                     receiving.clone(),
                     keys.ves.clone(),
                     self.bch_recv.to_bytes().clone(),
-                    self.keys.ves.public_key(),
+                    self.keys.ves.public_key(&secp),
                 );
 
                 self.state = State::WithBobKeys(Value0 {
