@@ -4,18 +4,17 @@ use sigma_fun::{
     ed25519::curve25519_dalek::scalar::Scalar, ext::dl_secp256k1_ed25519_eq::CrossCurveDLEQProof,
 };
 
-use crate::{
-    proof,
-    utils::{monero_priv_deser, monero_priv_ser},
-};
+use crate::{proof, utils::monero_private_key};
 
 use self::bitcoin::random_private_key;
 
 pub mod bitcoin;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPrivate {
+    #[serde(with = "monero_private_key")]
     pub monero_spend: monero::PrivateKey,
+    #[serde(with = "monero_private_key")]
     pub monero_view: monero::PrivateKey,
     pub ves: bitcoincash::PrivateKey,
 }
@@ -37,8 +36,7 @@ impl KeyPrivate {
 #[derivative(Debug)]
 pub struct KeyPublic {
     pub monero_spend: monero::PublicKey,
-    #[rustfmt::skip]
-    #[serde(serialize_with = "monero_priv_ser",deserialize_with = "monero_priv_deser")]
+    #[serde(with = "monero_private_key")]
     pub monero_view: monero::PrivateKey,
     pub ves: bitcoincash::PublicKey,
 
@@ -64,8 +62,7 @@ impl From<KeyPrivate> for KeyPublic {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPublicWithoutProof {
     pub monero_spend: monero::PublicKey,
-    #[rustfmt::skip]
-    #[serde(serialize_with = "monero_priv_ser",deserialize_with = "monero_priv_deser")]
+    #[serde(with = "monero_private_key")]
     pub monero_view: monero::PrivateKey,
     pub ves: bitcoincash::PublicKey,
 

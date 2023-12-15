@@ -1,7 +1,9 @@
 use ecdsa_fun::fun::Scalar;
+use serde::{Deserialize, Serialize};
 
 pub mod address;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Network {
     Mainnet,
     Testnet,

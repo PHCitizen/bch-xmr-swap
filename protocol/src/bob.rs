@@ -19,6 +19,7 @@
 
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use ecdsa_fun::adaptor::EncryptedSignature;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     adaptor_signature::AdaptorSignature,
@@ -26,47 +27,50 @@ use crate::{
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Response, ResponseError, Swap, Transition},
+    utils::{monero_key_pair, monero_view_pair},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value0 {
     alice_keys: KeyPublicWithoutProof,
     alice_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
-
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value1 {
     alice_keys: KeyPublicWithoutProof,
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value2 {
     alice_keys: KeyPublicWithoutProof,
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
     restore_height: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum State {
     Init,
     WithAliceKey(Value0),
     ContractMatch(Value0),
     VerifiedEncSig(Value1),
     MoneroLocked(Value2),
-    SwapSuccess(monero::KeyPair, u64),
+    SwapSuccess(#[serde(with = "monero_key_pair")] monero::KeyPair, u64),
 }
 
 // Api endpoints that will be exposed to alice

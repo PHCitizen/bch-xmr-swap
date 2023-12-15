@@ -1,11 +1,11 @@
-use derivative::Derivative;
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use monero::Address;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     blockchain::{types, BCH_MIN_CONFIRMATION},
-    keys::KeyPublic,
+    keys::{bitcoin, KeyPublic},
+    utils::{bch_amount, monero_amount, monero_network},
 };
 
 #[derive(Debug)]
@@ -53,17 +53,19 @@ pub enum Transition {
     XmrLockVerified(u64),
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Swap<S> {
     pub id: String,
+    #[serde(with = "monero_network")]
     pub xmr_network: monero::Network,
-    pub bch_network: String,
+    pub bch_network: bitcoin::Network,
 
     pub keys: crate::keys::KeyPrivate,
     pub bch_recv: bitcoincash::Script,
 
+    #[serde(with = "monero_amount")]
     pub xmr_amount: monero::Amount,
+    #[serde(with = "bch_amount")]
     pub bch_amount: bitcoincash::Amount,
 
     pub state: S,
@@ -86,22 +88,3 @@ pub fn tx_has_correct_amount_and_conf(
 
     return false;
 }
-
-// TODO: needed?
-// fn ser_outpoint<S>(outpoint: &OutPoint, s: S) -> Result<S::Ok, S::Error>
-// where
-//     S: Serializer,
-// {
-//     s.serialize_str(&outpoint.to_string())
-// }
-
-// fn deser_outpoint<'de, D>(deserializer: D) -> Result<OutPoint, D::Error>
-// where
-//     D: Deserializer<'de>,
-// {
-//     use serde::de::Error;
-
-//     String::deserialize(deserializer).and_then(|string| {
-//         OutPoint::from_str(&string).map_err(|err| Error::custom(err.to_string()))
-//     })
-// }

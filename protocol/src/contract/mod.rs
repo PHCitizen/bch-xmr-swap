@@ -1,11 +1,12 @@
 use bitcoin_hashes::{hash160, Hash};
 use bitcoincash::blockdata::{opcodes, script::Builder};
+use serde::{Deserialize, Serialize};
 
 use crate::keys::bitcoin::address;
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
     pub mining_fee: i64,
     pub success_output: Vec<u8>,
@@ -61,7 +62,7 @@ impl Contract {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractPair {
     pub swaplock: Contract,
     pub refund: Contract,
