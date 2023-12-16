@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use monero::Address;
 use serde::{Deserialize, Serialize};
@@ -53,7 +55,7 @@ pub enum Transition {
     XmrLockVerified(u64),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Swap<S> {
     pub id: String,
     #[serde(with = "monero_network")]
@@ -69,6 +71,39 @@ pub struct Swap<S> {
     pub bch_amount: bitcoincash::Amount,
 
     pub state: S,
+}
+
+impl<S: Debug> Debug for Swap<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Swap {{\n\
+                \tid: {:?},\n\
+                \txmr_network: {:?},\n\
+                \tbch_network: {:?},\n\
+                \tkeys: KeyPrivate {{\n\
+                    \t\tmonero_spend: monero::PrivateKey({}),\n\
+                    \t\tmonero_view: monero::PrivateKey({}),\n\
+                    \t\tves: bitcoincash::PrivateKey({}),\n\
+                \t}},\n\
+                \tbch_recv: {:?},\n\
+                \txmr_amount: {:?},\n\
+                \tbch_amount: {:?},\n\
+                \tstate: {:?},\n\
+            }}\n\
+            ",
+            self.id,
+            self.xmr_network,
+            self.bch_network,
+            self.keys.monero_spend,
+            self.keys.monero_view,
+            self.keys.ves,
+            self.bch_recv,
+            self.xmr_amount,
+            self.bch_amount,
+            self.state
+        )
+    }
 }
 
 pub fn tx_has_correct_amount_and_conf(

@@ -1,4 +1,5 @@
-use derivative::Derivative;
+use std::fmt::Debug;
+
 use serde::{Deserialize, Serialize};
 use sigma_fun::{
     ed25519::curve25519_dalek::scalar::Scalar, ext::dl_secp256k1_ed25519_eq::CrossCurveDLEQProof,
@@ -32,8 +33,7 @@ impl KeyPrivate {
     }
 }
 
-#[derive(Derivative, Clone, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeyPublic {
     pub monero_spend: monero::PublicKey,
     #[serde(with = "monero_private_key")]
@@ -41,7 +41,6 @@ pub struct KeyPublic {
     pub ves: bitcoincash::PublicKey,
 
     pub spend_bch: bitcoincash::PublicKey,
-    #[derivative(Debug = "ignore")]
     pub proof: CrossCurveDLEQProof,
 }
 
@@ -56,6 +55,22 @@ impl From<KeyPrivate> for KeyPublic {
             spend_bch,
             proof,
         }
+    }
+}
+
+impl Debug for KeyPublic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "KeyPublic {{\n\
+                \tmonero_spend: monero::PublicKey({}),\n\
+                \tmonero_view: monero::PrivateKey({}),\n\
+                \tves: bitcoincash::PublicKey({}),\n\
+                \tspend_bch: bitcoincash::PublicKey({}),\n\
+            }} \n\
+            ",
+            self.monero_spend, self.monero_view, self.ves, self.spend_bch
+        )
     }
 }
 
