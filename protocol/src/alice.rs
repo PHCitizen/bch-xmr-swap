@@ -19,11 +19,13 @@
 //!         -> Alice can get swap_tx and broadcast it
 //!
 
+use crate::utils::monero_view_pair;
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use bitcoincash::{
     consensus::Encodable, OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
 };
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     adaptor_signature::AdaptorSignature,
@@ -33,33 +35,36 @@ use crate::{
     protocol::{Response, ResponseError, Swap, Transition},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value0 {
     bob_keys: KeyPublicWithoutProof,
     bob_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
 
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value1 {
     bob_keys: KeyPublicWithoutProof,
     bob_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
 
     outpoint: OutPoint,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct Value2 {
     bob_keys: KeyPublicWithoutProof,
     bob_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     spend_bch: bitcoincash::PublicKey,
     outpoint: OutPoint,
@@ -67,7 +72,7 @@ pub struct Value2 {
     dec_sig: Signature,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum State {
     Init,
     WithBobKeys(Value0),
