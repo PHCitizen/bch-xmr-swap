@@ -125,12 +125,12 @@ impl Swap<State> {
                     1000,
                     self.bch_recv.clone().into_bytes(),
                     self.keys.ves.public_key(&secp),
-                    receiving.clone(),
+                    receiving.clone().into_bytes(),
                     keys.ves.clone(),
                 );
 
                 self.state = State::WithAliceKey(Value0 {
-                    alice_bch_recv: receiving,
+                    alice_bch_recv: receiving.into_bytes(),
                     contract_pair,
 
                     shared_keypair: monero::ViewPair {

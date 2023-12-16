@@ -163,7 +163,7 @@ impl Swap<State> {
                 let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
                 let contract = ContractPair::create(
                     1000,
-                    receiving.clone(),
+                    receiving.clone().into_bytes(),
                     keys.ves.clone(),
                     self.bch_recv.to_bytes().clone(),
                     self.keys.ves.public_key(&secp),
@@ -171,7 +171,7 @@ impl Swap<State> {
 
                 self.state = State::WithBobKeys(Value0 {
                     spend_bch: keys.spend_bch.clone(),
-                    bob_bch_recv: receiving,
+                    bob_bch_recv: receiving.into_bytes(),
                     contract_pair: contract,
                     shared_keypair: monero::ViewPair {
                         view: self.keys.monero_view + keys.monero_view,

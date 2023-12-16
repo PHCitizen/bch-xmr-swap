@@ -13,3 +13,4 @@ pub(crate) mod utils;
 pub use bitcoincash;
 pub use monero;
 pub use monero_rpc;
+pub use rand;

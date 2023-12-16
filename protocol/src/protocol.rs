@@ -36,7 +36,7 @@ pub enum Response {
 pub enum Transition {
     Msg0 {
         keys: KeyPublic,
-        receiving: Vec<u8>,
+        receiving: bitcoincash::Script,
     },
     Contract {
         bch_address: String,
