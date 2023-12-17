@@ -169,3 +169,26 @@ pub mod bch_amount {
         Ok(bitcoincash::Amount::from_sat(amount))
     }
 }
+
+pub mod monero_public_key {
+    use std::str::FromStr;
+
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    type Type = monero::PublicKey;
+
+    pub fn serialize<S>(key: &Type, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_str(&key.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Type, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let amount = String::deserialize(deserializer)?;
+        Ok(monero::PublicKey::from_str(&amount).map_err(|e| Error::custom(e.to_string()))?)
+    }
+}

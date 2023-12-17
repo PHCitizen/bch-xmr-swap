@@ -5,9 +5,11 @@ use sigma_fun::{
     ed25519::curve25519_dalek::scalar::Scalar, ext::dl_secp256k1_ed25519_eq::CrossCurveDLEQProof,
 };
 
-use crate::{proof, utils::monero_private_key};
-
 use self::bitcoin::random_private_key;
+use crate::{
+    proof,
+    utils::{monero_private_key, monero_public_key},
+};
 
 pub mod bitcoin;
 
@@ -35,6 +37,7 @@ impl KeyPrivate {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeyPublic {
+    #[serde(with = "monero_public_key")]
     pub monero_spend: monero::PublicKey,
     #[serde(with = "monero_private_key")]
     pub monero_view: monero::PrivateKey,
@@ -76,6 +79,7 @@ impl Debug for KeyPublic {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyPublicWithoutProof {
+    #[serde(with = "monero_public_key")]
     pub monero_spend: monero::PublicKey,
     #[serde(with = "monero_private_key")]
     pub monero_view: monero::PrivateKey,

@@ -9,9 +9,11 @@ const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d0
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
     pub mining_fee: i64,
+    #[serde(with = "hex")]
     pub success_output: Vec<u8>,
     pub pubkey_ves: bitcoincash::PublicKey,
     pub timelock: i64,
+    #[serde(with = "hex")]
     pub failed_output: Vec<u8>,
 }
 

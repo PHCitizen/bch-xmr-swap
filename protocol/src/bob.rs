@@ -33,6 +33,7 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value0 {
     alice_keys: KeyPublicWithoutProof,
+    #[serde(with = "hex")]
     alice_bch_recv: Vec<u8>,
     contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
@@ -43,6 +44,7 @@ pub struct Value0 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value1 {
     alice_keys: KeyPublicWithoutProof,
+    #[serde(with = "hex")]
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
@@ -54,6 +56,7 @@ pub struct Value1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value2 {
     alice_keys: KeyPublicWithoutProof,
+    #[serde(with = "hex")]
     alice_bch_recv: Vec<u8>,
     // contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
