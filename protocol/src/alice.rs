@@ -44,7 +44,6 @@ pub struct Value0 {
 
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +54,6 @@ pub struct Value1 {
     contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
 
     outpoint: OutPoint,
 }
@@ -69,7 +67,6 @@ pub struct Value2 {
     contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
     outpoint: OutPoint,
 
     dec_sig: Signature,
@@ -113,7 +110,7 @@ impl Alice {
             let hash = sha256::hash(&props.bob_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
                 &self.swap.keys.ves,
-                &props.spend_bch,
+                &props.bob_keys.spend_bch,
                 hash.as_byte_array(),
             );
             return Some(enc_sig);
@@ -164,8 +161,7 @@ impl SwapEvents for Alice {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
-                let is_valid_keys =
-                    proof::verify(&keys.proof, keys.spend_bch.clone(), keys.monero_spend);
+                let is_valid_keys = proof::verify(&keys.proof, keys.spend_bch, keys.monero_spend);
                 if !is_valid_keys {
                     return Response::Exit("invalid proof".to_owned());
                 }
@@ -180,7 +176,6 @@ impl SwapEvents for Alice {
                 );
 
                 self.state = State::WithBobKeys(Value0 {
-                    spend_bch: keys.spend_bch.clone(),
                     bob_bch_recv: receiving.into_bytes(),
                     contract_pair: contract,
                     shared_keypair: monero::ViewPair {
@@ -237,7 +232,6 @@ impl SwapEvents for Alice {
                             bob_bch_recv: props.bob_bch_recv,
                             contract_pair: props.contract_pair,
                             shared_keypair: props.shared_keypair,
-                            spend_bch: props.spend_bch,
 
                             outpoint,
                         });
@@ -268,7 +262,6 @@ impl SwapEvents for Alice {
                     bob_bch_recv: props.bob_bch_recv,
                     contract_pair: props.contract_pair,
                     shared_keypair: props.shared_keypair,
-                    spend_bch: props.spend_bch,
                     outpoint: props.outpoint,
                     dec_sig,
                 });

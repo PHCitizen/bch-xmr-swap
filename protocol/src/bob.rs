@@ -38,7 +38,6 @@ pub struct Value0 {
     contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +48,6 @@ pub struct Value1 {
     // contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
 }
 
@@ -61,7 +59,6 @@ pub struct Value2 {
     // contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    spend_bch: bitcoincash::PublicKey,
     // refund_unlocker: Signature,
     restore_height: u64,
 }
@@ -106,7 +103,7 @@ impl Bob {
             let hash = sha256::hash(&props.alice_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
                 &self.swap.keys.ves,
-                &props.spend_bch,
+                &props.alice_keys.spend_bch,
                 hash.as_byte_array(),
             );
 
@@ -123,8 +120,7 @@ impl SwapEvents for Bob {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
-                let is_valid_keys =
-                    proof::verify(&keys.proof, keys.spend_bch.clone(), keys.monero_spend);
+                let is_valid_keys = proof::verify(&keys.proof, keys.spend_bch, keys.monero_spend);
 
                 if !is_valid_keys {
                     return Response::Exit("invalid proof".to_owned());
@@ -148,7 +144,6 @@ impl SwapEvents for Bob {
                         spend: monero::PublicKey::from_private_key(&self.swap.keys.monero_spend)
                             + keys.monero_spend,
                     },
-                    spend_bch: keys.spend_bch.clone(),
                     alice_keys: keys.into(),
                 });
 
@@ -196,7 +191,6 @@ impl SwapEvents for Bob {
                     alice_bch_recv: props.alice_bch_recv,
                     // contract_pair: props.contract_pair,
                     shared_keypair: props.shared_keypair,
-                    spend_bch: props.spend_bch,
                     // refund_unlocker: dec_sig,
                 });
 
@@ -209,7 +203,6 @@ impl SwapEvents for Bob {
                     alice_bch_recv: props.alice_bch_recv,
                     // contract_pair: props.contract_pair,
                     shared_keypair: props.shared_keypair,
-                    spend_bch: props.spend_bch,
                     // refund_unlocker: props.refund_unlocker,
                     restore_height,
                 });
@@ -218,7 +211,7 @@ impl SwapEvents for Bob {
 
             (State::MoneroLocked(props), Transition::DecSig(decsig)) => {
                 let alice_spend = AdaptorSignature::recover_decryption_key(
-                    props.alice_keys.spend_bch.clone(),
+                    props.alice_keys.spend_bch,
                     decsig,
                     self.swaplock_enc_sig()
                         .expect("Enc sig should be open at current state"),
