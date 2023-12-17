@@ -5,7 +5,9 @@ use monero::Address;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    alice::Alice,
     blockchain::{types, BCH_MIN_CONFIRMATION},
+    bob::Bob,
     keys::{bitcoin, KeyPublic},
     utils::{bch_amount, monero_amount, monero_network},
 };
@@ -56,7 +58,7 @@ pub enum Transition {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct Swap<S> {
+pub struct Swap {
     pub id: String,
     #[serde(with = "monero_network")]
     pub xmr_network: monero::Network,
@@ -69,11 +71,9 @@ pub struct Swap<S> {
     pub xmr_amount: monero::Amount,
     #[serde(with = "bch_amount")]
     pub bch_amount: bitcoincash::Amount,
-
-    pub state: S,
 }
 
-impl<S: Debug> Debug for Swap<S> {
+impl Debug for Swap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -89,7 +89,6 @@ impl<S: Debug> Debug for Swap<S> {
                 \tbch_recv: {:?},\n\
                 \txmr_amount: {:?},\n\
                 \tbch_amount: {:?},\n\
-                \tstate: {:?},\n\
             }}\n\
             ",
             self.id,
@@ -101,8 +100,28 @@ impl<S: Debug> Debug for Swap<S> {
             self.bch_recv,
             self.xmr_amount,
             self.bch_amount,
-            self.state
         )
+    }
+}
+
+#[async_trait::async_trait]
+pub trait SwapEvents {
+    async fn transition(&mut self, transition: Transition) -> Response;
+}
+
+#[derive(Deserialize, Serialize)]
+pub enum SwapWrapper {
+    Alice(Alice),
+    Bob(Bob),
+}
+
+#[async_trait::async_trait]
+impl SwapEvents for SwapWrapper {
+    async fn transition(&mut self, transition: Transition) -> Response {
+        match self {
+            SwapWrapper::Alice(alice) => alice.transition(transition).await,
+            SwapWrapper::Bob(bob) => bob.transition(transition).await,
+        }
     }
 }
 

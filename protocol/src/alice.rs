@@ -19,7 +19,7 @@
 //!         -> Alice can get swap_tx and broadcast it
 //!
 
-use crate::utils::monero_view_pair;
+use crate::{protocol::SwapEvents, utils::monero_view_pair};
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use bitcoincash::{
     consensus::Encodable, OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
@@ -81,10 +81,16 @@ pub enum State {
     ValidEncSig(Value2),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Alice {
+    pub state: State,
+    pub swap: Swap,
+}
+
 // Api endpoints that will be exposed to bob
-impl Swap<State> {
+impl Alice {
     pub fn get_keys(&self) -> KeyPublic {
-        KeyPublic::from(self.keys.clone())
+        KeyPublic::from(self.swap.keys.clone())
     }
 
     pub fn contract(&self) -> Option<(String, monero::Address)> {
@@ -92,7 +98,7 @@ impl Swap<State> {
         if let State::WithBobKeys(props) = &self.state {
             return Some((
                 props.contract_pair.swaplock.cash_address(),
-                monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair),
+                monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair),
             ));
         }
 
@@ -103,7 +109,7 @@ impl Swap<State> {
         if let State::ContractMatch(props) = &self.state {
             let hash = sha256::hash(&props.bob_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
-                &self.keys.ves,
+                &self.swap.keys.ves,
                 &props.spend_bch,
                 hash.as_byte_array(),
             );
@@ -115,7 +121,7 @@ impl Swap<State> {
 }
 
 // private api
-impl Swap<State> {
+impl Alice {
     pub fn get_swap_tx(&self) -> Option<Vec<u8>> {
         if let State::ValidEncSig(props) = &self.state {
             let unlocker = props
@@ -134,8 +140,8 @@ impl Swap<State> {
                     ..Default::default()
                 }],
                 output: vec![TxOut {
-                    value: self.bch_amount.to_sat(),
-                    script_pubkey: self.bch_recv.clone(),
+                    value: self.swap.bch_amount.to_sat(),
+                    script_pubkey: self.swap.bch_recv.clone(),
                     token: None,
                 }],
             }
@@ -149,8 +155,9 @@ impl Swap<State> {
     }
 }
 
-impl Swap<State> {
-    pub async fn transition(&mut self, transition: Transition) -> Response {
+#[async_trait::async_trait]
+impl SwapEvents for Alice {
+    async fn transition(&mut self, transition: Transition) -> Response {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
@@ -165,8 +172,8 @@ impl Swap<State> {
                     1000,
                     receiving.clone().into_bytes(),
                     keys.ves.clone(),
-                    self.bch_recv.to_bytes().clone(),
-                    self.keys.ves.public_key(&secp),
+                    self.swap.bch_recv.to_bytes().clone(),
+                    self.swap.keys.ves.public_key(&secp),
                 );
 
                 self.state = State::WithBobKeys(Value0 {
@@ -174,8 +181,8 @@ impl Swap<State> {
                     bob_bch_recv: receiving.into_bytes(),
                     contract_pair: contract,
                     shared_keypair: monero::ViewPair {
-                        view: self.keys.monero_view + keys.monero_view,
-                        spend: monero::PublicKey::from_private_key(&self.keys.monero_spend)
+                        view: self.swap.keys.monero_view + keys.monero_view,
+                        spend: monero::PublicKey::from_private_key(&self.swap.keys.monero_spend)
                             + keys.monero_spend,
                     },
                     bob_keys: keys.into(),
@@ -195,7 +202,7 @@ impl Swap<State> {
                 }
 
                 let xmr_derived =
-                    monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair);
+                    monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
                     return Response::Err(ResponseError::InvalidXmrAddress);
                 }
@@ -207,7 +214,7 @@ impl Swap<State> {
             (State::ContractMatch(props), Transition::BchConfirmedTx(transaction)) => {
                 let mut outpoint = None;
                 for (vout, txout) in transaction.output.iter().enumerate() {
-                    if txout.value == self.bch_amount.to_sat()
+                    if txout.value == self.swap.bch_amount.to_sat()
                         && txout.script_pubkey.to_string()
                             == props.contract_pair.swaplock.cash_address()
                     {
@@ -236,12 +243,14 @@ impl Swap<State> {
                 };
             }
             (State::BchLocked(props), Transition::EncSig(encsig)) => {
-                let dec_sig =
-                    AdaptorSignature::decrypt_signature(&self.keys.monero_spend, encsig.clone());
+                let dec_sig = AdaptorSignature::decrypt_signature(
+                    &self.swap.keys.monero_spend,
+                    encsig.clone(),
+                );
 
                 {
                     // ? Check if the message by bob can unlock the swaplock contract
-                    let alice_recv_hash = sha256::hash(&self.bch_recv.to_bytes());
+                    let alice_recv_hash = sha256::hash(&self.swap.bch_recv.to_bytes());
                     let signer = props.bob_keys.ves.clone();
                     let message = alice_recv_hash.to_byte_array();
 

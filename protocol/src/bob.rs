@@ -26,7 +26,7 @@ use crate::{
     contract::ContractPair,
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Response, ResponseError, Swap, Transition},
+    protocol::{Response, ResponseError, Swap, SwapEvents, Transition},
     utils::{monero_key_pair, monero_view_pair},
 };
 
@@ -73,10 +73,16 @@ pub enum State {
     SwapSuccess(#[serde(with = "monero_key_pair")] monero::KeyPair, u64),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bob {
+    pub state: State,
+    pub swap: Swap,
+}
+
 // Api endpoints that will be exposed to alice
-impl Swap<State> {
+impl Bob {
     pub fn get_keys(&self) -> KeyPublic {
-        KeyPublic::from(self.keys.clone())
+        KeyPublic::from(self.swap.keys.clone())
     }
 
     pub fn contract(&self) -> Option<(String, monero::Address)> {
@@ -88,7 +94,7 @@ impl Swap<State> {
 
         Some((
             props.contract_pair.swaplock.cash_address(),
-            monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair),
+            monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair),
         ))
     }
 
@@ -96,7 +102,7 @@ impl Swap<State> {
         if let State::MoneroLocked(props) = &self.state {
             let hash = sha256::hash(&props.alice_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
-                &self.keys.ves,
+                &self.swap.keys.ves,
                 &props.spend_bch,
                 hash.as_byte_array(),
             );
@@ -108,8 +114,9 @@ impl Swap<State> {
     }
 }
 
-impl Swap<State> {
-    pub async fn transition(&mut self, transition: Transition) -> Response {
+#[async_trait::async_trait]
+impl SwapEvents for Bob {
+    async fn transition(&mut self, transition: Transition) -> Response {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
@@ -123,8 +130,8 @@ impl Swap<State> {
                 let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
                 let contract_pair = ContractPair::create(
                     1000,
-                    self.bch_recv.clone().into_bytes(),
-                    self.keys.ves.public_key(&secp),
+                    self.swap.bch_recv.clone().into_bytes(),
+                    self.swap.keys.ves.public_key(&secp),
                     receiving.clone().into_bytes(),
                     keys.ves.clone(),
                 );
@@ -134,8 +141,8 @@ impl Swap<State> {
                     contract_pair,
 
                     shared_keypair: monero::ViewPair {
-                        view: self.keys.monero_view + keys.monero_view,
-                        spend: monero::PublicKey::from_private_key(&self.keys.monero_spend)
+                        view: self.swap.keys.monero_view + keys.monero_view,
+                        spend: monero::PublicKey::from_private_key(&self.swap.keys.monero_spend)
                             + keys.monero_spend,
                     },
                     spend_bch: keys.spend_bch.clone(),
@@ -156,7 +163,7 @@ impl Swap<State> {
                 }
 
                 let xmr_derived =
-                    monero::Address::from_viewpair(self.xmr_network, &props.shared_keypair);
+                    monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
                     return Response::Err(ResponseError::InvalidXmrAddress);
                 }
@@ -167,8 +174,9 @@ impl Swap<State> {
 
             (State::ContractMatch(props), Transition::EncSig(enc_sig)) => {
                 // check if decrypted sig can unlock Refund.cash contract
-                let bob_receiving_hash = sha256::hash(self.bch_recv.as_bytes());
-                let dec_sig = AdaptorSignature::decrypt_signature(&self.keys.monero_spend, enc_sig);
+                let bob_receiving_hash = sha256::hash(self.swap.bch_recv.as_bytes());
+                let dec_sig =
+                    AdaptorSignature::decrypt_signature(&self.swap.keys.monero_spend, enc_sig);
 
                 let is_valid = AdaptorSignature::verify(
                     props.alice_keys.ves.clone(),
@@ -215,7 +223,7 @@ impl Swap<State> {
 
                 let key_pair = monero::KeyPair {
                     view: props.shared_keypair.view,
-                    spend: self.keys.monero_spend + alice_spend,
+                    spend: self.swap.keys.monero_spend + alice_spend,
                 };
 
                 self.state = State::SwapSuccess(key_pair, props.restore_height);
