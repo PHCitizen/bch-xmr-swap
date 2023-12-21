@@ -174,6 +174,9 @@ impl SwapEvents for Alice {
                     keys.ves.clone(),
                     self.swap.bch_recv.to_bytes().clone(),
                     self.swap.keys.ves.public_key(&secp),
+                    self.swap.timelock1,
+                    self.swap.timelock2,
+                    self.swap.bch_network,
                 );
 
                 self.state = State::WithBobKeys(Value0 {

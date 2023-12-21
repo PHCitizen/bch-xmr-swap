@@ -77,6 +77,9 @@ pub struct Swap {
     pub xmr_amount: monero::Amount,
     #[serde(with = "bch_amount")]
     pub bch_amount: bitcoincash::Amount,
+
+    pub timelock1: i64,
+    pub timelock2: i64,
 }
 
 impl Debug for Swap {

@@ -132,6 +132,9 @@ impl SwapEvents for Bob {
                     self.swap.keys.ves.public_key(&secp),
                     receiving.clone().into_bytes(),
                     keys.ves.clone(),
+                    self.swap.timelock1,
+                    self.swap.timelock2,
+                    self.swap.bch_network,
                 );
 
                 self.state = State::WithAliceKey(Value0 {

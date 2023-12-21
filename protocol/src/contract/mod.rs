@@ -2,7 +2,7 @@ use bitcoin_hashes::{hash160, Hash};
 use bitcoincash::blockdata::{opcodes, script::Builder};
 use serde::{Deserialize, Serialize};
 
-use crate::keys::bitcoin::address;
+use crate::keys::bitcoin::{address, Network};
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
 
@@ -15,6 +15,8 @@ pub struct Contract {
     pub timelock: i64,
     #[serde(with = "hex")]
     pub failed_output: Vec<u8>,
+
+    pub bch_network: Network,
 }
 
 impl Contract {
@@ -55,12 +57,10 @@ impl Contract {
 
     pub fn cash_address(&self) -> String {
         let hash = hash160::Hash::hash(&self.script());
-        address::encode(&hash.to_byte_array(), "bitcoincash", 8)
-    }
-
-    pub fn cash_token_address(&self) -> String {
-        let hash = hash160::Hash::hash(&self.script());
-        address::encode(&hash.to_byte_array(), "bitcoincash", 24)
+        match self.bch_network {
+            Network::Mainnet => address::encode(&hash.to_byte_array(), "bitcoincash", 8),
+            Network::Testnet => address::encode(&hash.to_byte_array(), "bchtest", 8),
+        }
     }
 }
 
@@ -77,21 +77,26 @@ impl ContractPair {
         bob_pubkey_ves: bitcoincash::PublicKey,
         alice_receiving: Vec<u8>,
         alice_pubkey_ves: bitcoincash::PublicKey,
+        timelock1: i64,
+        timelock2: i64,
+        bch_network: Network,
     ) -> ContractPair {
         let refund = Contract {
             mining_fee,
             success_output: bob_receiving,
             pubkey_ves: alice_pubkey_ves,
-            timelock: 0,
+            timelock: timelock1,
             failed_output: alice_receiving.clone(),
+            bch_network,
         };
 
         let swaplock = Contract {
             mining_fee,
             success_output: alice_receiving,
             pubkey_ves: bob_pubkey_ves,
-            timelock: 0,
+            timelock: timelock2,
             failed_output: refund.locking_script(),
+            bch_network,
         };
 
         ContractPair { swaplock, refund }
@@ -118,15 +123,12 @@ mod test {
             pubkey_ves,
             timelock: 1000,
             failed_output: output,
+            bch_network: crate::keys::bitcoin::Network::Testnet,
         };
 
         assert_eq!(
             refund.cash_address(),
             "bitcoincash:prmnwxmmaq58h22jt7qrjmutnkrmrfm4j57zy4cf45"
-        );
-        assert_eq!(
-            refund.cash_token_address(),
-            "bitcoincash:rrmnwxmmaq58h22jt7qrjmutnkrmrfm4j5eghtk028"
         );
     }
 }

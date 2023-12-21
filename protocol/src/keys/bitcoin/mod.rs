@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod address;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Network {
     Mainnet,
     Testnet,
