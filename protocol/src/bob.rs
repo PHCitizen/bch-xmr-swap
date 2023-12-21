@@ -26,7 +26,7 @@ use crate::{
     contract::ContractPair,
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Response, ResponseError, Swap, SwapEvents, Transition},
+    protocol::{Action, Error, Swap, SwapEvents, Transition},
     utils::{monero_key_pair, monero_view_pair},
 };
 
@@ -79,13 +79,12 @@ pub struct Bob {
     pub swap: Swap,
 }
 
-// Api endpoints that will be exposed to alice
 impl Bob {
-    pub fn get_keys(&self) -> KeyPublic {
+    pub fn get_public_keys(&self) -> KeyPublic {
         KeyPublic::from(self.swap.keys.clone())
     }
 
-    pub fn contract(&self) -> Option<(String, monero::Address)> {
+    pub fn get_contract(&self) -> Option<(String, monero::Address)> {
         let props = match &self.state {
             State::WithAliceKey(props) => props,
             State::ContractMatch(props) => props,
@@ -98,7 +97,7 @@ impl Bob {
         ))
     }
 
-    pub fn swaplock_enc_sig(&self) -> Option<EncryptedSignature> {
+    pub fn get_swaplock_enc_sig(&self) -> Option<EncryptedSignature> {
         if let State::MoneroLocked(props) = &self.state {
             let hash = sha256::hash(&props.alice_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
@@ -116,14 +115,14 @@ impl Bob {
 
 #[async_trait::async_trait]
 impl SwapEvents for Bob {
-    async fn transition(&mut self, transition: Transition) -> Response {
+    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>) {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
                 let is_valid_keys = proof::verify(&keys.proof, keys.spend_bch, keys.monero_spend);
 
                 if !is_valid_keys {
-                    return Response::Exit("invalid proof".to_owned());
+                    return (Some(Action::TradeFailed), Some(Error::InvalidProof));
                 }
 
                 let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
@@ -147,7 +146,7 @@ impl SwapEvents for Bob {
                     alice_keys: keys.into(),
                 });
 
-                return Response::Ok;
+                return (None, None);
             }
             (
                 State::WithAliceKey(props),
@@ -157,17 +156,17 @@ impl SwapEvents for Bob {
                 },
             ) => {
                 if props.contract_pair.swaplock.cash_address() != bch_address {
-                    return Response::Err(ResponseError::InvalidBchAddress);
+                    return (None, Some(Error::InvalidBchAddress));
                 }
 
                 let xmr_derived =
                     monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
-                    return Response::Err(ResponseError::InvalidXmrAddress);
+                    return (None, Some(Error::InvalidXmrAddress));
                 }
 
                 self.state = State::ContractMatch(props);
-                return Response::Ok;
+                return (None, None);
             }
 
             (State::ContractMatch(props), Transition::EncSig(enc_sig)) => {
@@ -183,8 +182,11 @@ impl SwapEvents for Bob {
                 );
 
                 if !is_valid {
-                    return Response::Exit("Invalid signature".to_owned());
+                    return (Some(Action::TradeFailed), Some(Error::InvalidSignature));
                 }
+
+                let (bch_address, xmr_address) = self.get_contract().unwrap();
+                let action = Action::LockBchAndWatchXmr(bch_address, xmr_address);
 
                 self.state = State::VerifiedEncSig(Value1 {
                     alice_keys: props.alice_keys,
@@ -194,10 +196,14 @@ impl SwapEvents for Bob {
                     // refund_unlocker: dec_sig,
                 });
 
-                return Response::Ok;
+                return (Some(action), None);
             }
 
-            (State::VerifiedEncSig(props), Transition::XmrLockVerified(restore_height)) => {
+            (State::VerifiedEncSig(props), Transition::XmrLockVerified(restore_height, amount)) => {
+                if amount != self.swap.xmr_amount {
+                    return (None, Some(Error::InvalidXmrAddress));
+                }
+
                 self.state = State::MoneroLocked(Value2 {
                     alice_keys: props.alice_keys,
                     alice_bch_recv: props.alice_bch_recv,
@@ -206,14 +212,15 @@ impl SwapEvents for Bob {
                     // refund_unlocker: props.refund_unlocker,
                     restore_height,
                 });
-                return Response::Ok;
+                let (bch_address, _) = self.get_contract().unwrap();
+                return (Some(Action::WatchBchAddress(bch_address)), None);
             }
 
             (State::MoneroLocked(props), Transition::DecSig(decsig)) => {
                 let alice_spend = AdaptorSignature::recover_decryption_key(
                     props.alice_keys.spend_bch,
                     decsig,
-                    self.swaplock_enc_sig()
+                    self.get_swaplock_enc_sig()
                         .expect("Enc sig should be open at current state"),
                 );
 
@@ -224,9 +231,32 @@ impl SwapEvents for Bob {
 
                 self.state = State::SwapSuccess(key_pair, props.restore_height);
 
-                return Response::Done;
+                return (Some(Action::TradeSuccess), None);
             }
-            (_, _) => return Response::Err(ResponseError::InvalidStateTransition),
+            (_, _) => return (None, Some(Error::InvalidStateTransition)),
         };
+    }
+
+    fn get_transition(&self) -> Option<Transition> {
+        match &self.state {
+            State::Init => None,
+            State::WithAliceKey(_) => {
+                let keys = self.get_public_keys();
+                let receiving = self.swap.bch_recv.clone();
+                Some(Transition::Msg0 { keys, receiving })
+            }
+            State::ContractMatch(_) => {
+                let (bch_address, xmr_address) = self.get_contract().unwrap();
+                Some(Transition::Contract {
+                    bch_address,
+                    xmr_address,
+                })
+            }
+            State::MoneroLocked(_) => {
+                let enc_sig = self.get_swaplock_enc_sig().unwrap();
+                Some(Transition::EncSig(enc_sig))
+            }
+            _ => None,
+        }
     }
 }

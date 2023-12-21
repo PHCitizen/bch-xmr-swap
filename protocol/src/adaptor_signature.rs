@@ -1,16 +1,17 @@
 use ecdsa_fun::{
-    adaptor::{Adaptor, EncryptedSignature},
+    adaptor::Adaptor,
     fun::{
         self,
         marker::{NonZero, Secret},
         Point,
     },
     nonce::Deterministic,
-    Signature,
 };
 use sha2::Sha256;
 use sigma_fun::ed25519::curve25519_dalek::scalar::Scalar as ScalarDalek;
 use sigma_fun::HashTranscript;
+
+pub use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 
 type Transcript = HashTranscript<Sha256, rand_chacha::ChaCha20Rng>;
 type NonceGen = Deterministic<Sha256>;

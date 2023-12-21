@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use monero::Address;
@@ -13,25 +13,34 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub enum ResponseError {
+pub enum Error {
+    InvalidProof,
     InvalidStateTransition,
     InvalidTransaction,
     InvalidBchAddress,
     InvalidXmrAddress,
+    InvalidSignature,
+    InvalidXmrAmount,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Debug::fmt(self, f)
+    }
 }
 
 #[derive(Debug)]
-pub enum Response {
-    Ok,
-    Err(ResponseError),
-    Exit(String),
-    Done,
+pub enum Action {
+    /// Trade must stop
+    TradeFailed,
+    /// No further transition needed
+    TradeSuccess,
+    /// The server must watch address for send/receive tx
+    /// and make Transition::BchTx(Transaction)
+    WatchBchAddress(String),
+    Refund,
 
-    /// if you receive this response,
-    /// you must check if it has valid output address and confirmation.
-    ///
-    /// If it does `Transition::BchLockVerified`
-    WatchBchTx(String),
+    LockBchAndWatchXmr(String, monero::Address),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,10 +60,7 @@ pub enum Transition {
     /// You are responsible to only use on confirmed tx
     #[serde(skip)]
     BchConfirmedTx(bitcoincash::Transaction),
-
-    /// The user of this transition must check if the shared address
-    /// received exact amount that is already spendable or 'unlocked'
-    XmrLockVerified(u64),
+    XmrLockVerified(u64, #[serde(with = "monero_amount")] monero::Amount), // restore_height, amount
 }
 
 #[derive(Deserialize, Serialize)]
@@ -104,23 +110,33 @@ impl Debug for Swap {
     }
 }
 
-#[async_trait::async_trait]
 pub trait SwapEvents {
-    async fn transition(&mut self, transition: Transition) -> Response;
+    /// Most of the time only one from the return type are `not None`
+    /// but there are special case that we both error and action
+    ///
+    /// Example: (Action::TradeFailed, Error::InvalidProof)
+    ///        : this means that we must stop the trade because other give invalid proof
+    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>);
+    fn get_transition(&self) -> Option<Transition>;
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum SwapWrapper {
     Alice(Alice),
     Bob(Bob),
 }
 
-#[async_trait::async_trait]
 impl SwapEvents for SwapWrapper {
-    async fn transition(&mut self, transition: Transition) -> Response {
+    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>) {
         match self {
-            SwapWrapper::Alice(alice) => alice.transition(transition).await,
-            SwapWrapper::Bob(bob) => bob.transition(transition).await,
+            SwapWrapper::Alice(alice) => alice.transition(transition),
+            SwapWrapper::Bob(bob) => bob.transition(transition),
+        }
+    }
+    fn get_transition(&self) -> Option<Transition> {
+        match self {
+            SwapWrapper::Alice(alice) => alice.get_transition(),
+            SwapWrapper::Bob(bob) => bob.get_transition(),
         }
     }
 }

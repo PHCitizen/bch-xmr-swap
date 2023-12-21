@@ -19,7 +19,10 @@
 //!         -> Alice can get swap_tx and broadcast it
 //!
 
-use crate::{protocol::SwapEvents, utils::monero_view_pair};
+use crate::{
+    protocol::{Action, SwapEvents},
+    utils::monero_view_pair,
+};
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use bitcoincash::{
     consensus::Encodable, OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
@@ -32,7 +35,7 @@ use crate::{
     contract::ContractPair,
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Response, ResponseError, Swap, Transition},
+    protocol::{Error, Swap, Transition},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,14 +90,12 @@ pub struct Alice {
     pub swap: Swap,
 }
 
-// Api endpoints that will be exposed to bob
 impl Alice {
-    pub fn get_keys(&self) -> KeyPublic {
+    pub fn get_public_keys(&self) -> KeyPublic {
         KeyPublic::from(self.swap.keys.clone())
     }
 
-    pub fn contract(&self) -> Option<(String, monero::Address)> {
-        // todo
+    pub fn get_contract(&self) -> Option<(String, monero::Address)> {
         if let State::WithBobKeys(props) = &self.state {
             return Some((
                 props.contract_pair.swaplock.cash_address(),
@@ -105,7 +106,7 @@ impl Alice {
         return None;
     }
 
-    pub fn refunc_enc_sig(&self) -> Option<EncryptedSignature> {
+    pub fn get_refunc_enc_sig(&self) -> Option<EncryptedSignature> {
         if let State::ContractMatch(props) = &self.state {
             let hash = sha256::hash(&props.bob_bch_recv);
             let enc_sig = AdaptorSignature::encrypted_sign(
@@ -157,13 +158,13 @@ impl Alice {
 
 #[async_trait::async_trait]
 impl SwapEvents for Alice {
-    async fn transition(&mut self, transition: Transition) -> Response {
+    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>) {
         let current_state = self.state.clone();
         match (current_state, transition) {
             (State::Init, Transition::Msg0 { keys, receiving }) => {
                 let is_valid_keys = proof::verify(&keys.proof, keys.spend_bch, keys.monero_spend);
                 if !is_valid_keys {
-                    return Response::Exit("invalid proof".to_owned());
+                    return (Some(Action::TradeFailed), Some(Error::InvalidProof));
                 }
 
                 let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
@@ -186,7 +187,7 @@ impl SwapEvents for Alice {
                     bob_keys: keys.into(),
                 });
 
-                return Response::Ok;
+                return (None, None);
             }
             (
                 State::WithBobKeys(props),
@@ -196,17 +197,17 @@ impl SwapEvents for Alice {
                 },
             ) => {
                 if props.contract_pair.swaplock.cash_address() != bch_address {
-                    return Response::Err(ResponseError::InvalidBchAddress);
+                    return (None, Some(Error::InvalidBchAddress));
                 }
 
                 let xmr_derived =
                     monero::Address::from_viewpair(self.swap.xmr_network, &props.shared_keypair);
                 if xmr_address != xmr_derived {
-                    return Response::Err(ResponseError::InvalidXmrAddress);
+                    return (None, Some(Error::InvalidXmrAddress));
                 }
 
                 self.state = State::ContractMatch(props);
-                return Response::WatchBchTx(bch_address);
+                return (Some(Action::WatchBchAddress(bch_address)), None);
             }
 
             (State::ContractMatch(props), Transition::BchConfirmedTx(transaction)) => {
@@ -225,7 +226,7 @@ impl SwapEvents for Alice {
                 }
 
                 match outpoint {
-                    None => return Response::Err(ResponseError::InvalidTransaction),
+                    None => return (None, Some(Error::InvalidTransaction)),
                     Some(outpoint) => {
                         self.state = State::BchLocked(Value1 {
                             bob_keys: props.bob_keys,
@@ -235,7 +236,7 @@ impl SwapEvents for Alice {
 
                             outpoint,
                         });
-                        return Response::Ok;
+                        return (None, None);
                     }
                 };
             }
@@ -252,7 +253,7 @@ impl SwapEvents for Alice {
                     let message = alice_recv_hash.to_byte_array();
 
                     if !AdaptorSignature::verify(signer, &message, &dec_sig) {
-                        return Response::Exit("Invalid signature".to_owned());
+                        return (Some(Action::Refund), Some(Error::InvalidSignature));
                         // Todo: procceed to refund
                     }
                 }
@@ -265,9 +266,31 @@ impl SwapEvents for Alice {
                     outpoint: props.outpoint,
                     dec_sig,
                 });
-                return Response::Done;
+                return (Some(Action::TradeSuccess), None);
             }
-            (_, _) => return Response::Err(ResponseError::InvalidStateTransition),
+            (_, _) => return (None, Some(Error::InvalidStateTransition)),
+        }
+    }
+
+    fn get_transition(&self) -> Option<Transition> {
+        match &self.state {
+            State::Init => {
+                let keys = self.get_public_keys();
+                let receiving = self.swap.bch_recv.clone();
+                Some(Transition::Msg0 { keys, receiving })
+            }
+            State::WithBobKeys(_) => {
+                let (bch_address, xmr_address) = self.get_contract().unwrap();
+                Some(Transition::Contract {
+                    bch_address,
+                    xmr_address,
+                })
+            }
+            State::ContractMatch(_) => {
+                let enc_sig = self.get_refunc_enc_sig().unwrap();
+                Some(Transition::EncSig(enc_sig))
+            }
+            _ => None,
         }
     }
 }
