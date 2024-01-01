@@ -263,6 +263,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "protocol",
  "reqwest",
  "serde",
@@ -1222,6 +1223,7 @@ dependencies = [
  "bitcoincash",
  "conquer-once",
  "ecdsa_fun",
+ "fs4",
  "hex",
  "hex-literal",
  "monero",
@@ -2006,7 +2008,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "fs4",
+ "hex",
  "protocol",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

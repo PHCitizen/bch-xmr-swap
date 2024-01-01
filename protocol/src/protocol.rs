@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Display};
 
 use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
 use monero::Address;
@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     alice::Alice,
-    blockchain::{types, BCH_MIN_CONFIRMATION},
     bob::Bob,
     keys::{bitcoin, KeyPublic},
     utils::{bch_amount, monero_amount, monero_network},
@@ -31,16 +30,20 @@ impl fmt::Display for Error {
 
 #[derive(Debug)]
 pub enum Action {
-    /// Trade must stop
-    TradeFailed,
+    SafeDelete,
     /// No further transition needed
     TradeSuccess,
     /// The server must watch address for send/receive tx
     /// and make Transition::BchTx(Transaction)
-    WatchBchAddress(String),
+    WatchBchAddress {
+        swaplock: String,
+        refund: String,
+    },
     Refund,
 
-    LockBchAndWatchXmr(String, monero::Address),
+    LockBch(String),
+    WatchXmr(monero::Address),
+    CreateXmrView(monero::ViewPair),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,10 +63,26 @@ pub enum Transition {
     /// You are responsible to only use on confirmed tx
     #[serde(skip)]
     BchConfirmedTx(bitcoincash::Transaction),
-    XmrLockVerified(u64, #[serde(with = "monero_amount")] monero::Amount), // restore_height, amount
+    XmrLockVerified(#[serde(with = "monero_amount")] monero::Amount),
+
+    SetXmrRestoreHeight(u64),
 }
 
-#[derive(Deserialize, Serialize)]
+impl Display for Transition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Transition::Msg0 { .. } => write!(f, "Transition::Msg0"),
+            Transition::Contract { .. } => write!(f, "Transition::Contract"),
+            Transition::EncSig(_) => write!(f, "Transition::EncSig"),
+            Transition::DecSig(_) => write!(f, "Transition::DecSig"),
+            Transition::BchConfirmedTx(_) => write!(f, "Transition::BchConfirmedTx"),
+            Transition::XmrLockVerified(_) => write!(f, "Transition::XmrLockVerified"),
+            Transition::SetXmrRestoreHeight(_) => write!(f, "Transition::SetXmrRestoreHeight"),
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Swap {
     pub id: String,
     #[serde(with = "monero_network")]
@@ -114,12 +133,13 @@ impl Debug for Swap {
 }
 
 pub trait SwapEvents {
+    type State;
     /// Most of the time only one from the return type are `not None`
     /// but there are special case that we both error and action
     ///
     /// Example: (Action::TradeFailed, Error::InvalidProof)
     ///        : this means that we must stop the trade because other give invalid proof
-    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>);
+    fn transition(self, transition: Transition) -> (Self::State, Vec<Action>, Option<Error>);
     fn get_transition(&self) -> Option<Transition>;
 }
 
@@ -127,37 +147,4 @@ pub trait SwapEvents {
 pub enum SwapWrapper {
     Alice(Alice),
     Bob(Bob),
-}
-
-impl SwapEvents for SwapWrapper {
-    fn transition(&mut self, transition: Transition) -> (Option<Action>, Option<Error>) {
-        match self {
-            SwapWrapper::Alice(alice) => alice.transition(transition),
-            SwapWrapper::Bob(bob) => bob.transition(transition),
-        }
-    }
-    fn get_transition(&self) -> Option<Transition> {
-        match self {
-            SwapWrapper::Alice(alice) => alice.get_transition(),
-            SwapWrapper::Bob(bob) => bob.get_transition(),
-        }
-    }
-}
-
-pub fn tx_has_correct_amount_and_conf(
-    tx: types::transaction::RpcResult,
-    locking_script: &str,
-    amount: bitcoincash::Amount,
-) -> bool {
-    if tx.confirmations < BCH_MIN_CONFIRMATION {
-        return false;
-    }
-
-    for vout in tx.vout {
-        if vout.value == amount && vout.script_pub_key.hex == locking_script {
-            return true;
-        }
-    }
-
-    return false;
 }

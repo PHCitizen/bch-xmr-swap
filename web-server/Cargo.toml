@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 axum = "0.7.2"
 fs4 = { version = "0.7", features = ["tokio"] }
+hex = { version = "0.4.3", features = ["serde"] }
 protocol = { path = "../protocol" }
+reqwest = { version = "0.11.22", features = ["json"] }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 tokio = { version = "1.35.0", features = ["full"] }

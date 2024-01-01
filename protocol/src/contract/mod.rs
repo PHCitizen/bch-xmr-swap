@@ -1,10 +1,21 @@
 use bitcoin_hashes::{hash160, Hash};
-use bitcoincash::blockdata::{opcodes, script::Builder};
+use bitcoincash::{
+    blockdata::{opcodes, script::Builder},
+    Transaction,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::bitcoin::{address, Network};
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
+
+pub enum TransactionType {
+    Unknown,
+    ToSwapLock,
+    ToRefund,
+    ToBob,
+    ToAlice,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
@@ -35,11 +46,16 @@ impl Contract {
         contract
     }
 
+    #[inline]
+    pub fn script_hash(&self) -> [u8; 20] {
+        hash160::Hash::hash(&self.script()).to_byte_array()
+    }
+
     pub fn locking_script(&self) -> Vec<u8> {
-        let hash = hash160::Hash::hash(&self.script());
+        let hash = self.script_hash();
         Builder::new()
             .push_opcode(opcodes::all::OP_HASH160)
-            .push_slice(&hash.to_byte_array())
+            .push_slice(&hash)
             .push_opcode(opcodes::all::OP_EQUAL)
             .into_script()
             .to_bytes()
@@ -56,10 +72,10 @@ impl Contract {
     }
 
     pub fn cash_address(&self) -> String {
-        let hash = hash160::Hash::hash(&self.script());
+        let hash = self.script_hash();
         match self.bch_network {
-            Network::Mainnet => address::encode(&hash.to_byte_array(), "bitcoincash", 8),
-            Network::Testnet => address::encode(&hash.to_byte_array(), "bchtest", 8),
+            Network::Mainnet => address::encode(&hash, "bitcoincash", 8),
+            Network::Testnet => address::encode(&hash, "bchreg", 8),
         }
     }
 }
@@ -68,6 +84,9 @@ impl Contract {
 pub struct ContractPair {
     pub swaplock: Contract,
     pub refund: Contract,
+    alice_receiving: Vec<u8>,
+    bob_receiving: Vec<u8>,
+    swaplock_in_sats: u64,
 }
 
 impl ContractPair {
@@ -80,10 +99,11 @@ impl ContractPair {
         timelock1: i64,
         timelock2: i64,
         bch_network: Network,
+        swaplock_in: bitcoincash::Amount,
     ) -> ContractPair {
         let refund = Contract {
             mining_fee,
-            success_output: bob_receiving,
+            success_output: bob_receiving.clone(),
             pubkey_ves: alice_pubkey_ves,
             timelock: timelock1,
             failed_output: alice_receiving.clone(),
@@ -92,14 +112,48 @@ impl ContractPair {
 
         let swaplock = Contract {
             mining_fee,
-            success_output: alice_receiving,
+            success_output: alice_receiving.clone(),
             pubkey_ves: bob_pubkey_ves,
             timelock: timelock2,
             failed_output: refund.locking_script(),
             bch_network,
         };
 
-        ContractPair { swaplock, refund }
+        ContractPair {
+            swaplock,
+            refund,
+            alice_receiving,
+            bob_receiving,
+            swaplock_in_sats: swaplock_in.to_sat(),
+        }
+    }
+
+    pub fn analyze_tx(&self, transaction: Transaction) -> TransactionType {
+        let swaplock = self.swaplock.locking_script();
+        let refund = self.refund.locking_script();
+
+        if transaction.input.len() == 1 && transaction.output.len() == 1 {
+            let input = transaction.input[0].script_sig.to_p2sh().to_bytes();
+            let output = transaction.output[0].script_pubkey.to_bytes();
+
+            if input == swaplock || input == refund {
+                if output == self.alice_receiving {
+                    return TransactionType::ToAlice;
+                } else if output == self.bob_receiving {
+                    return TransactionType::ToBob;
+                } else if output == refund {
+                    return TransactionType::ToRefund;
+                }
+            }
+        }
+
+        for out in transaction.output {
+            if out.script_pubkey.to_bytes() == swaplock && out.value == self.swaplock_in_sats {
+                return TransactionType::ToSwapLock;
+            }
+        }
+
+        return TransactionType::Unknown;
     }
 }
 

@@ -1,47 +1,37 @@
-use std::net::SocketAddr;
+use std::{fs, io::Write, net::SocketAddr};
 
 use axum::{
-    extract::{ConnectInfo, Path},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     routing::{patch, post},
     Json, Router,
 };
-use fs4::tokio::AsyncFileExt;
 use protocol::{
     alice::{self, Alice},
     bitcoincash,
     bob::{self, Bob},
     keys::{bitcoin::random_private_key, bitcoin::Network, KeyPrivate},
-    monero,
+    monero, monero_rpc,
+    persist::{Config, Error as PersistError, TradePersist},
     protocol::{Action, Swap, SwapEvents, SwapWrapper, Transition},
 };
 use serde::{Deserialize, Serialize};
-use tokio::{
-    fs,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ErrorKind},
+
+use crate::{
+    utils::{random_str, ApiResult, Error, JsonRej},
+    TAppState,
 };
 
-use crate::utils::{random_str, ApiResult, Error, JsonRej};
-
-pub fn trader() -> Router {
+pub fn trader(state: TAppState) -> Router {
     Router::new()
         .route("/", post(create))
         .route("/:trade_id", patch(transition).get(get_transition))
+        .with_state(state)
 }
-
-// ==========================================
-// SECTION: Self
-// ==========================================
 
 #[inline]
-fn get_file_path(id: &str) -> String {
-    format!("./.trades/ongoing/{id}-server.json")
-}
-
-#[derive(Serialize, Deserialize)]
-struct TradePersist {
-    swap: SwapWrapper,
-    refund_private_key: bitcoincash::PrivateKey,
+pub fn get_file_path(trade_id: &str) -> String {
+    format!("./.trades/ongoing/{trade_id}-server.json")
 }
 
 // ==========================================
@@ -64,7 +54,7 @@ async fn create(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     JsonRej(request): JsonRej<CreateRequest>,
 ) -> ApiResult<Json<CreateResponse>> {
-    let id = random_str(10);
+    let trade_id = random_str(10);
 
     let bch_network = Network::Testnet;
     let xmr_network = monero::Network::Stagenet;
@@ -81,7 +71,7 @@ async fn create(
     };
 
     let swap = Swap {
-        id: id.clone(),
+        id: trade_id.clone(),
         keys: KeyPrivate::random(bch_network),
         bch_amount,
         xmr_amount,
@@ -93,14 +83,12 @@ async fn create(
     };
 
     let swap = match request.path.as_str() {
-        "bch->xmr" => SwapWrapper::Alice(Alice {
-            state: alice::State::Init,
-            swap,
-        }),
-        "xmr->bch" => SwapWrapper::Bob(Bob {
-            state: bob::State::Init,
-            swap,
-        }),
+        // TODO:
+        // "bch->xmr" => SwapWrapper::Alice(Alice {
+        //     state: alice::State::Init,
+        //     swap,
+        // }),
+        "xmr->bch" => SwapWrapper::Bob(Bob::new(swap)),
         _ => {
             return Err(Error::new(
                 StatusCode::NOT_IMPLEMENTED,
@@ -109,7 +97,7 @@ async fn create(
         }
     };
 
-    let serialized = serde_json::to_vec_pretty(&TradePersist {
+    let serialized = serde_json::to_vec_pretty(&Config {
         swap,
         refund_private_key: refund_priv,
     })?;
@@ -117,15 +105,13 @@ async fn create(
     fs::OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(get_file_path(&id))
-        .await?
-        .write(&serialized)
-        .await?;
+        .open(get_file_path(&trade_id))?
+        .write(&serialized)?;
 
-    println!("[INFO] New Trade: {id}");
+    println!("[INFO] New Trade: {trade_id}");
     println!("       Client IP: {addr}");
 
-    Ok(Json(CreateResponse { trade_id: id }))
+    Ok(Json(CreateResponse { trade_id }))
 }
 
 // ==========================================
@@ -138,67 +124,39 @@ struct TransitionResponse {
 }
 
 async fn transition(
+    State(state): State<TAppState>,
     Path(trade_id): Path<String>,
     JsonRej(request): JsonRej<Transition>,
 ) -> ApiResult<Json<TransitionResponse>> {
-    let (tr, transition) = match request {
-        Transition::Msg0 { .. } => ("Msg0", request),
-        Transition::Contract { .. } => ("Contract", request),
-        Transition::EncSig(_) => ("EncSig", request),
-        _ => {
-            return Err(Error::new(
-                StatusCode::FORBIDDEN,
-                "Private transition not allowed",
-            ))
-        }
-    };
+    // ! we always open the file even on private transition
+    // ! we can put a matcher here to reduce file opening
 
-    println!("Transition `{tr}` for {trade_id}");
-    let mut file = match fs::OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open(get_file_path(&trade_id))
-        .await
-    {
-        Err(e) => match e.kind() {
-            ErrorKind::NotFound => {
+    let mut trade = match TradePersist::restore(get_file_path(&trade_id)).await {
+        Ok(v) => v,
+        Err(e) => match e {
+            PersistError::NotFound => {
                 return Err(Error::new(StatusCode::NOT_FOUND, "Trade id not found"))
             }
-            _ => return Err(Error::from(e.to_string())),
+            PersistError::Unknown(e) => return Err(Error::from(e.to_string())),
         },
-        Ok(file) => file,
     };
 
-    let mut buf = Vec::new();
-    file.lock_exclusive()?;
-    file.read_to_end(&mut buf).await?;
+    match trade.config.swap {
+        SwapWrapper::Bob(inner) => {
+            let mut bob = bob::Runner {
+                inner,
+                trade_id,
+                bch: &state.bch_server,
+                monero_wallet: &state.monero_wallet,
+                monerod: &state.monerod,
+            };
+            bob.pub_transition(request).await?;
 
-    let mut value = serde_json::from_slice::<TradePersist>(&buf)?;
-    let (action, error) = value.swap.transition(transition);
-
-    if let Some(action) = action {
-        println!("Action: {:?}", action);
-
-        match action {
-            Action::TradeFailed => {
-                todo!("delete trade")
-            }
-            Action::LockBchAndWatchXmr(bch_addr, monero_addr) => {
-                // TODO:
-            }
-            a => todo!("Handle {:?}", a),
+            trade.config.swap = SwapWrapper::Bob(bob.inner);
+            trade.save();
         }
+        SwapWrapper::Alice(_) => {}
     }
-
-    if let Some(e) = error {
-        return Err(Error::new(StatusCode::FORBIDDEN, e.to_string()));
-    }
-
-    let serialized = serde_json::to_vec_pretty(&value)?;
-    file.set_len(0).await?;
-    file.rewind().await?;
-    file.write(&serialized).await?;
-    file.unlock()?;
 
     Ok(Json(TransitionResponse { error: false }))
 }
@@ -208,22 +166,16 @@ async fn transition(
 // ==========================================
 
 async fn get_transition(Path(trade_id): Path<String>) -> ApiResult<Json<Option<Transition>>> {
-    match fs::OpenOptions::new()
-        .read(true)
-        .open(get_file_path(&trade_id))
-        .await
-    {
-        Err(e) => match e.kind() {
-            ErrorKind::NotFound => {
+    match TradePersist::restore(get_file_path(&trade_id)).await {
+        Ok(value) => match value.config.swap {
+            SwapWrapper::Alice(alice) => Ok(Json(alice.get_transition())),
+            SwapWrapper::Bob(bob) => Ok(Json(bob.get_transition())),
+        },
+        Err(e) => match e {
+            PersistError::NotFound => {
                 return Err(Error::new(StatusCode::NOT_FOUND, "Trade id not found"))
             }
-            _ => return Err(Error::from(e.to_string())),
+            PersistError::Unknown(e) => return Err(Error::from(e.to_string())),
         },
-        Ok(mut f) => {
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf).await?;
-            let value = serde_json::from_slice::<TradePersist>(&buf)?;
-            Ok(Json(value.swap.get_transition()))
-        }
     }
 }
