@@ -12,8 +12,6 @@ use tokio::{
     sync::{broadcast, oneshot, Mutex},
 };
 
-mod xmr;
-
 #[derive(Deserialize)]
 struct HasId {
     id: u64,
@@ -191,57 +189,3 @@ pub async fn scan_address_conf_tx(
 
     txs
 }
-
-// pub async fn is_valid_tx(
-//     hash: &str,
-//     out_hex: &str,
-//     out_val: u64,
-// ) -> Result<bool, Box<dyn std::error::Error>> {
-//     let response = Bch::get_tx(hash).await?;
-//     for vout in response.result.vout {
-//         if vout.script_pub_key.hex == out_hex && vout.value == out_val {
-//             return Ok(true);
-//         }
-//     }
-
-//     return Ok(false);
-// }
-
-// pub async fn is_confirmed(hash: &str) -> Result<bool, Box<dyn std::error::Error>> {
-//     let response = Bch::get_tx(hash).await?;
-//     Ok(response.result.confirmations >= BCH_MIN_CONFIRMATION)
-// }
-
-// Example code to create xmr_wallet_rpc
-//
-// pub fn new(exe_path: &str, ip: &str, port: u16) -> (WalletClient, DaemonJsonRpcClient) {
-//     let rpc_server = Command::new(exe_path)
-//         .env("LANG", "en_AU.UTF-8")
-//         .kill_on_drop(true)
-//         .args([
-//             "--stagenet",
-//             "--disable-rpc-login",
-//             "--log-level=1",
-//             "--daemon-address=http://stagenet.xmr-tw.org:38081",
-//             "--untrusted-daemon",
-//             "--rpc-bind-ip",
-//             ip,
-//             "--rpc-bind-port",
-//             port.to_string().as_str(),
-//             "--wallet-dir=wallet_dir",
-//         ])
-//         .spawn()
-//         .unwrap();
-//
-//     (
-//         RpcClientBuilder::new()
-//             .build(format!("http://{ip}:{port}"))
-//             .unwrap()
-//             .wallet(),
-//         RpcClientBuilder::new()
-//             .build("http://stagenet.xmr-tw.org:38081")
-//             .unwrap()
-//             .daemon(),
-//     )
-// }
-// --stagenet --disable-rpc-login --log-level=1 --daemon-address=http://stagenet.xmr-tw.org:38081 --untrusted-daemon --rpc-bind-ip=127.0.0.1 --rpc-bind-port=8081 --wallet-dir=wallet_dir

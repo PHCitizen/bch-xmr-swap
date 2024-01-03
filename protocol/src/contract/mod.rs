@@ -9,8 +9,8 @@ use crate::keys::bitcoin::{address, Network};
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
 
+#[derive(Debug)]
 pub enum TransactionType {
-    Unknown,
     ToSwapLock,
     ToRefund,
     ToBob,
@@ -19,7 +19,7 @@ pub enum TransactionType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
-    pub mining_fee: i64,
+    pub mining_fee: u64,
     #[serde(with = "hex")]
     pub success_output: Vec<u8>,
     pub pubkey_ves: bitcoincash::PublicKey,
@@ -32,13 +32,12 @@ pub struct Contract {
 
 impl Contract {
     pub fn script(&self) -> Vec<u8> {
-        let pubkey = bitcoincash::PublicKey::from_slice(&self.pubkey_ves.to_bytes()).unwrap();
         let mut contract = Builder::new()
             .push_slice(&self.failed_output)
             .push_int(self.timelock)
-            .push_key(&pubkey)
+            .push_key(&self.pubkey_ves)
             .push_slice(&self.success_output)
-            .push_int(self.mining_fee)
+            .push_int(self.mining_fee as i64)
             .into_script()
             .to_bytes();
 
@@ -51,6 +50,8 @@ impl Contract {
         hash160::Hash::hash(&self.script()).to_byte_array()
     }
 
+    // ? Idk returning raw script becomes error for caller,
+    // ? we need to convert to bytes, then caller need to convert back to script
     pub fn locking_script(&self) -> Vec<u8> {
         let hash = self.script_hash();
         Builder::new()
@@ -61,6 +62,8 @@ impl Contract {
             .to_bytes()
     }
 
+    // ? Idk returning raw script becomes error for caller,
+    // ?we need to convert to bytes, then caller need to convert back to script
     pub fn unlocking_script(&self, unlocker: &[u8]) -> Vec<u8> {
         let locking = self.script();
 
@@ -91,7 +94,7 @@ pub struct ContractPair {
 
 impl ContractPair {
     pub fn create(
-        mining_fee: i64,
+        mining_fee: u64,
         bob_receiving: Vec<u8>,
         bob_pubkey_ves: bitcoincash::PublicKey,
         alice_receiving: Vec<u8>,
@@ -105,7 +108,7 @@ impl ContractPair {
             mining_fee,
             success_output: bob_receiving.clone(),
             pubkey_ves: alice_pubkey_ves,
-            timelock: timelock1,
+            timelock: timelock2,
             failed_output: alice_receiving.clone(),
             bch_network,
         };
@@ -114,7 +117,7 @@ impl ContractPair {
             mining_fee,
             success_output: alice_receiving.clone(),
             pubkey_ves: bob_pubkey_ves,
-            timelock: timelock2,
+            timelock: timelock1,
             failed_output: refund.locking_script(),
             bch_network,
         };
@@ -128,7 +131,10 @@ impl ContractPair {
         }
     }
 
-    pub fn analyze_tx(&self, transaction: Transaction) -> TransactionType {
+    pub fn analyze_tx(
+        &self,
+        transaction: Transaction,
+    ) -> Option<(bitcoincash::OutPoint, TransactionType)> {
         let swaplock = self.swaplock.locking_script();
         let refund = self.refund.locking_script();
 
@@ -137,23 +143,30 @@ impl ContractPair {
             let output = transaction.output[0].script_pubkey.to_bytes();
 
             if input == swaplock || input == refund {
+                let tx_type;
                 if output == self.alice_receiving {
-                    return TransactionType::ToAlice;
+                    tx_type = TransactionType::ToAlice;
                 } else if output == self.bob_receiving {
-                    return TransactionType::ToBob;
-                } else if output == refund {
-                    return TransactionType::ToRefund;
+                    tx_type = TransactionType::ToBob;
+                // } else if output == refund {
+                } else {
+                    tx_type = TransactionType::ToRefund;
                 }
+
+                return Some((bitcoincash::OutPoint::new(transaction.txid(), 0), tx_type));
             }
         }
 
-        for out in transaction.output {
+        for (vout, out) in transaction.output.iter().enumerate() {
             if out.script_pubkey.to_bytes() == swaplock && out.value == self.swaplock_in_sats {
-                return TransactionType::ToSwapLock;
+                return Some((
+                    bitcoincash::OutPoint::new(transaction.txid(), vout as u32),
+                    TransactionType::ToSwapLock,
+                ));
             }
         }
 
-        return TransactionType::Unknown;
+        return None;
     }
 }
 
