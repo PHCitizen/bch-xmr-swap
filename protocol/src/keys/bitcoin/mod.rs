@@ -7,6 +7,7 @@ pub mod address;
 pub enum Network {
     Mainnet,
     Testnet,
+    Regtest,
 }
 
 pub fn random_private_key(network: Network) -> bitcoincash::PrivateKey {
@@ -16,6 +17,7 @@ pub fn random_private_key(network: Network) -> bitcoincash::PrivateKey {
     let network = match network {
         Network::Mainnet => bitcoincash::Network::Bitcoin,
         Network::Testnet => bitcoincash::Network::Testnet,
+        Network::Regtest => bitcoincash::Network::Regtest,
     };
     bitcoincash::PrivateKey::from_slice(&scalar.to_bytes(), network).unwrap()
 }

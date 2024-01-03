@@ -9,7 +9,7 @@ use axum::{
 use protocol::{
     bitcoincash,
     bob::{self, Bob},
-    keys::{bitcoin::random_private_key, bitcoin::Network, KeyPrivate},
+    keys::{bitcoin::random_private_key, KeyPrivate},
     monero,
     persist::{Config, Error as PersistError, TradePersist},
     protocol::{Swap, SwapEvents, SwapWrapper, Transition},
@@ -54,6 +54,7 @@ struct CreateResponse {
 }
 
 async fn create(
+    State(state): State<TAppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     JsonRej(request): JsonRej<CreateRequest>,
 ) -> ApiResult<Json<CreateResponse>> {
@@ -67,11 +68,8 @@ async fn create(
 
     let trade_id = random_str(10);
 
-    let bch_network = Network::Testnet;
-    let xmr_network = monero::Network::Mainnet;
-
     let (refund_priv, refund_script) = {
-        let refund_priv = random_private_key(bch_network);
+        let refund_priv = random_private_key(state.bch_network);
         let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
         let refund_pkh = refund_priv.public_key(&secp).pubkey_hash();
         let script = bitcoincash::Script::new_p2pkh(&refund_pkh);
@@ -80,11 +78,11 @@ async fn create(
 
     let swap = Swap {
         id: trade_id.clone(),
-        keys: KeyPrivate::random(bch_network),
+        keys: KeyPrivate::random(state.bch_network),
         bch_amount: request.bch_amount,
         xmr_amount: request.xmr_amount,
-        xmr_network,
-        bch_network,
+        xmr_network: state.monero_network,
+        bch_network: state.bch_network,
         bch_recv: refund_script,
         timelock1: request.timelock1,
         timelock2: request.timelock2,

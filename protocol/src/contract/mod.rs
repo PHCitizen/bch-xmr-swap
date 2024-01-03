@@ -78,7 +78,8 @@ impl Contract {
         let hash = self.script_hash();
         match self.bch_network {
             Network::Mainnet => address::encode(&hash, "bitcoincash", 8),
-            Network::Testnet => address::encode(&hash, "bchreg", 8),
+            Network::Testnet => address::encode(&hash, "bchtest", 8),
+            Network::Regtest => address::encode(&hash, "bchreg", 8),
         }
     }
 }

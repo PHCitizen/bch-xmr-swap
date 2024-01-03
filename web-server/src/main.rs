@@ -5,7 +5,9 @@ use axum::Router;
 use protocol::{
     alice,
     blockchain::{self, TcpElectrum},
-    bob, monero_rpc,
+    bob,
+    keys::bitcoin::Network,
+    monero, monero_rpc,
     persist::TradePersist,
     protocol::SwapWrapper,
 };
@@ -22,6 +24,8 @@ pub struct AppState {
     monerod: monero_rpc::DaemonJsonRpcClient,
     monero_wallet: Mutex<monero_rpc::WalletClient>,
     bch_min_conf: i64,
+    monero_network: monero::Network,
+    bch_network: Network,
 }
 
 type TAppState = Arc<AppState>;
@@ -107,8 +111,16 @@ async fn check_bch_wallets(state: &TAppState) {
 
 #[tokio::main]
 async fn main() {
+    let bch_min_conf = 1;
+
     let monerod_addr = "http://localhost:18081";
     let monero_wallet_addr = "http://localhost:8081";
+    let fullcrum_tcp = "localhost:50001";
+
+    let monero_network = monero::Network::Stagenet;
+    let bch_network = Network::Testnet;
+
+    // ===================================================
 
     let monerod = monero_rpc::RpcClientBuilder::new()
         .build(monerod_addr)
@@ -121,14 +133,16 @@ async fn main() {
             .wallet(),
     );
 
-    let socket = TcpStream::connect("localhost:50001").await.unwrap();
+    let socket = TcpStream::connect(fullcrum_tcp).await.unwrap();
     let bch_server = blockchain::TcpElectrum::new(socket);
 
     let state = Arc::new(AppState {
         bch_server: bch_server.clone(),
         monerod,
         monero_wallet,
-        bch_min_conf: 2,
+        bch_min_conf,
+        monero_network,
+        bch_network,
     });
 
     tokio::spawn({

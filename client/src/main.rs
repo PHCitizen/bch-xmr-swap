@@ -135,11 +135,16 @@ impl TransitionManager {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    const BCH_MIN_CONFIRMATION: i64 = 2;
+    let bch_min_confirmation: i64 = 1;
+
+    let fullcrum_tcp = "localhost:50001";
+    let monero_network = monero::Network::Stagenet;
     let bch_network = bitcoin::Network::Testnet;
-    // let socket = TcpStream::connect("chipnet.imaginary.cash:50001").await?;
+
+    // ===================================================
+
     let req_client = reqwest::Client::new();
-    let socket = TcpStream::connect("localhost:50001").await?;
+    let socket = TcpStream::connect(fullcrum_tcp).await?;
     let bch_server = Arc::new(blockchain::TcpElectrum::new(socket));
 
     println!("Subscribing for new block");
@@ -170,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
             bch_amount,
             xmr_amount,
 
-            xmr_network: monero::Network::Mainnet,
+            xmr_network: monero_network,
             bch_network,
 
             bch_recv: recv_script,
@@ -211,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
                         let mut runner = alice::Runner {
                             inner: alice.clone(),
                             bch: &bch_server,
-                            min_bch_conf: BCH_MIN_CONFIRMATION,
+                            min_bch_conf: bch_min_confirmation,
                         };
                         let _ = runner.check_bch().await;
                         *alice = runner.inner;
@@ -254,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
                         SwapWrapper::Alice(alice) => {
                             let mut runner = alice::Runner {
                                 inner: alice.clone(),
-                                min_bch_conf: BCH_MIN_CONFIRMATION,
+                                min_bch_conf: bch_min_confirmation,
                                 bch: &bch_server,
                             };
 
