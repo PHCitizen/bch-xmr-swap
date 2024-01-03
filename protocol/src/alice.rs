@@ -20,18 +20,24 @@
 //!
 
 use crate::{
+    blockchain::{scan_address_conf_tx, TcpElectrum},
+    contract::TransactionType,
     protocol::{Action, SwapEvents},
     utils::monero_view_pair,
 };
+use anyhow::bail;
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use bitcoincash::{
     consensus::Encodable, OutPoint, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
 };
-use ecdsa_fun::{adaptor::EncryptedSignature, Signature};
+use ecdsa_fun::adaptor::EncryptedSignature;
+use hex::ToHex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{
     adaptor_signature::AdaptorSignature,
+    bitcoincash::secp256k1::ecdsa,
     contract::ContractPair,
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
@@ -72,7 +78,7 @@ pub struct Value2 {
     shared_keypair: monero::ViewPair,
     outpoint: OutPoint,
 
-    dec_sig: Signature,
+    dec_sig: ecdsa::Signature,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,32 +114,40 @@ impl Alice {
 
     pub fn get_refunc_enc_sig(&self) -> Option<EncryptedSignature> {
         if let State::ContractMatch(props) = &self.state {
-            let hash = sha256::hash(&props.bob_bch_recv);
+            let hash = sha256::hash(&props.bob_bch_recv).to_byte_array();
+            let hash = sha256::hash(&hash).to_byte_array();
             let enc_sig = AdaptorSignature::encrypted_sign(
                 &self.swap.keys.ves,
                 &props.bob_keys.spend_bch,
-                hash.as_byte_array(),
+                &hash,
             );
             return Some(enc_sig);
         }
 
         return None;
     }
-}
 
-// private api
-impl Alice {
-    pub fn get_swap_tx(&self) -> Option<Vec<u8>> {
+    pub fn get_contract_pair(&self) -> Option<ContractPair> {
+        match self.state.clone() {
+            State::Init => None,
+            State::WithBobKeys(v) => Some(v.contract_pair),
+            State::ContractMatch(v) => Some(v.contract_pair),
+            State::BchLocked(v) => Some(v.contract_pair),
+            State::ValidEncSig(v) => Some(v.contract_pair),
+        }
+    }
+
+    pub fn get_unlock_normal_tx(&self) -> Option<Transaction> {
         if let State::ValidEncSig(props) = &self.state {
             let unlocker = props
                 .contract_pair
                 .swaplock
-                .unlocking_script(&props.dec_sig.to_bytes());
+                .unlocking_script(&props.dec_sig.serialize_der());
 
-            let mut buffer = Vec::new();
-            Transaction {
+            let mining_fee = props.contract_pair.swaplock.mining_fee;
+            let transaction = Transaction {
                 version: 2,
-                lock_time: PackedLockTime(812991),
+                lock_time: PackedLockTime(0), // TODO: Should we use current time?
                 input: vec![TxIn {
                     sequence: Sequence(0),
                     previous_output: props.outpoint,
@@ -141,15 +155,13 @@ impl Alice {
                     ..Default::default()
                 }],
                 output: vec![TxOut {
-                    value: self.swap.bch_amount.to_sat(),
+                    value: self.swap.bch_amount.to_sat() - mining_fee,
                     script_pubkey: self.swap.bch_recv.clone(),
                     token: None,
                 }],
-            }
-            .consensus_encode(&mut buffer)
-            .expect("cannot encode tx");
+            };
 
-            return Some(buffer);
+            return Some(transaction);
         }
 
         None
@@ -234,23 +246,8 @@ impl SwapEvents for Alice {
             }
 
             (State::ContractMatch(props), Transition::BchConfirmedTx(transaction)) => {
-                let mut outpoint = None;
-                let swaplock_script = props.contract_pair.swaplock.locking_script();
-                for (vout, txout) in transaction.output.iter().enumerate() {
-                    if txout.value == self.swap.bch_amount.to_sat()
-                        && txout.script_pubkey.as_bytes() == swaplock_script
-                    {
-                        outpoint = Some(bitcoincash::OutPoint {
-                            txid: transaction.txid(),
-                            vout: vout as u32,
-                        });
-                        break;
-                    }
-                }
-
-                match outpoint {
-                    None => return (self, vec![], Some(Error::InvalidTransaction)),
-                    Some(outpoint) => {
+                match props.contract_pair.analyze_tx(transaction) {
+                    Some((outpoint, TransactionType::ToSwapLock)) => {
                         self.state = State::BchLocked(Value1 {
                             bob_keys: props.bob_keys,
                             bob_bch_recv: props.bob_bch_recv,
@@ -259,10 +256,22 @@ impl SwapEvents for Alice {
 
                             outpoint,
                         });
-                        return (self, vec![], None);
+
+                        let xmr_amount = self.swap.xmr_amount;
+                        let address = monero::Address::from_viewpair(
+                            self.swap.xmr_network,
+                            &props.shared_keypair,
+                        );
+                        return (self, vec![Action::LockXmr(xmr_amount, address)], None);
                     }
-                };
+                    _ => return (self, vec![], Some(Error::InvalidTransaction)),
+                }
             }
+
+            (State::ValidEncSig(_), Transition::EncSig(_)) => {
+                return (self, vec![], None);
+            }
+
             (State::BchLocked(props), Transition::EncSig(encsig)) => {
                 let dec_sig = AdaptorSignature::decrypt_signature(
                     &self.swap.keys.monero_spend,
@@ -271,15 +280,20 @@ impl SwapEvents for Alice {
 
                 {
                     // ? Check if the message by bob can unlock the swaplock contract
-                    let alice_recv_hash = sha256::hash(&self.swap.bch_recv.to_bytes());
+                    let recv_hash = sha256::hash(&self.swap.bch_recv.to_bytes()).to_byte_array();
+                    let recv_hash = sha256::hash(&recv_hash).to_byte_array();
                     let signer = props.bob_keys.ves.clone();
-                    let message = alice_recv_hash.to_byte_array();
 
-                    if !AdaptorSignature::verify(signer, &message, &dec_sig) {
+                    if !AdaptorSignature::verify(signer, &recv_hash, &dec_sig) {
                         return (self, vec![Action::Refund], Some(Error::InvalidSignature));
                         // Todo: procceed to refund
                     }
                 }
+
+                let dec_sig = match ecdsa::Signature::from_compact(&dec_sig.to_bytes()) {
+                    Ok(v) => v,
+                    Err(_) => return (self, vec![Action::Refund], Some(Error::InvalidSignature)),
+                };
 
                 self.state = State::ValidEncSig(Value2 {
                     bob_keys: props.bob_keys,
@@ -289,7 +303,7 @@ impl SwapEvents for Alice {
                     outpoint: props.outpoint,
                     dec_sig,
                 });
-                return (self, vec![Action::TradeSuccess], None);
+                return (self, vec![Action::UnlockBchNormal], None);
             }
             (_, _) => return (self, vec![], Some(Error::InvalidStateTransition)),
         }
@@ -315,5 +329,80 @@ impl SwapEvents for Alice {
             }
             _ => None,
         }
+    }
+}
+
+pub struct Runner<'a> {
+    pub inner: Alice,
+    pub bch: &'a TcpElectrum,
+    // pub monerod: &'a monero_rpc::DaemonJsonRpcClient,
+    // pub monero_wallet: &'a Mutex<monero_rpc::WalletClient>,
+    pub min_bch_conf: i64,
+}
+
+impl Runner<'_> {
+    pub async fn check_bch(&mut self) -> anyhow::Result<()> {
+        let contract = self.inner.get_contract_pair();
+        if let Some(contract) = contract {
+            let swaplock = contract.swaplock.cash_address();
+            let refund = contract.refund.cash_address();
+            for address in [swaplock, refund].into_iter() {
+                let txs = scan_address_conf_tx(&self.bch, &address, self.min_bch_conf).await;
+                println!("{}txs address {}", txs.len(), address);
+                for tx in txs {
+                    let _ = self.priv_transition(Transition::BchConfirmedTx(tx)).await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn pub_transition(&mut self, transition: Transition) -> anyhow::Result<()> {
+        match &transition {
+            Transition::Msg0 { .. } => {}
+            Transition::Contract { .. } => {}
+            Transition::EncSig(_) => {}
+            _ => bail!("priv transition"),
+        }
+
+        self.priv_transition(transition).await
+    }
+
+    pub async fn priv_transition(&mut self, transition: Transition) -> anyhow::Result<()> {
+        let (new_state, actions, error) = self.inner.clone().transition(transition);
+        if let Some(err) = error {
+            bail!(err);
+        }
+
+        for action in actions {
+            match action {
+                Action::LockXmr(amount, addr) => {
+                    let msg = format!("  Send {} to {}  ", amount, addr.to_string());
+                    println!("|{:=^width$}|", "", width = msg.len());
+                    println!("|{msg}|");
+                    println!("|{:=^width$}|", "", width = msg.len());
+                }
+                Action::UnlockBchNormal => {
+                    let mut buffer = Vec::new();
+                    let transaction = new_state.get_unlock_normal_tx().unwrap();
+                    transaction.consensus_encode(&mut buffer).unwrap();
+                    let tx_hex: String = buffer.encode_hex();
+
+                    println!("Broadcasting tx. Expected txid: {}", transaction.txid());
+                    println!("Hex: {}", tx_hex);
+                    let transaction_resp = self
+                        .bch
+                        .send("blockchain.transaction.broadcast", json!([tx_hex]))
+                        .await
+                        .unwrap();
+                    dbg!(transaction_resp);
+                }
+                _ => {}
+            }
+        }
+
+        self.inner = new_state;
+        Ok(())
     }
 }

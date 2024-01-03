@@ -41,9 +41,14 @@ pub enum Action {
     },
     Refund,
 
-    LockBch(String),
+    LockBch(bitcoincash::Amount, String),
+    LockXmr(monero::Amount, monero::Address),
+
     WatchXmr(monero::Address),
     CreateXmrView(monero::ViewPair),
+
+    UnlockBchNormal,
+    UnlockBchFallback,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

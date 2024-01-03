@@ -1,12 +1,13 @@
 // #![allow(unused_variables, unused_imports, dead_code)]
-use std::{collections::HashMap, env, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::Router;
 use protocol::{
-    blockchain::{self, scan_address_conf_tx, TcpElectrum},
+    alice,
+    blockchain::{self, TcpElectrum},
     bob, monero_rpc,
     persist::TradePersist,
-    protocol::{SwapEvents, SwapWrapper, Transition},
+    protocol::SwapWrapper,
 };
 use serde_json::json;
 use tokio::{fs, net::TcpStream, sync::Mutex, time::sleep};
@@ -18,14 +19,14 @@ pub mod utils;
 
 pub struct AppState {
     bch_server: TcpElectrum,
-    bch_addrs: Mutex<HashMap<String, String>>,
     monerod: monero_rpc::DaemonJsonRpcClient,
     monero_wallet: Mutex<monero_rpc::WalletClient>,
+    bch_min_conf: i64,
 }
 
 type TAppState = Arc<AppState>;
 
-async fn check_wallet_xmr(state: &TAppState) {
+async fn check_xmr_wallets(state: &TAppState) {
     let base_path = "./.trades/ongoing/";
     let mut entries = fs::read_dir(base_path).await.unwrap();
     while let Some(entry) = entries.next_entry().await.unwrap() {
@@ -38,23 +39,69 @@ async fn check_wallet_xmr(state: &TAppState) {
         }
 
         let trade_id = filename.split("-").next().unwrap().to_string();
-        let trade = TradePersist::restore(get_file_path(&trade_id))
+        let mut trade = TradePersist::restore(get_file_path(&trade_id))
             .await
             .unwrap();
         match trade.config.swap {
             SwapWrapper::Bob(inner) => {
-                let _ = bob::Runner {
+                let mut runner = bob::Runner {
                     inner,
                     trade_id,
                     bch: &state.bch_server,
                     monero_wallet: &state.monero_wallet,
                     monerod: &state.monerod,
-                }
-                .check_xmr()
-                .await;
+                    min_bch_conf: state.bch_min_conf,
+                };
+                let _ = runner.check_xmr().await;
+                trade.config.swap = SwapWrapper::Bob(runner.inner);
             }
             _ => {}
         }
+        trade.save().await;
+    }
+}
+
+async fn check_bch_wallets(state: &TAppState) {
+    let base_path = "./.trades/ongoing/";
+    let mut entries = fs::read_dir(base_path).await.unwrap();
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        let filename = entry.file_name().into_string().unwrap();
+        if !filename.ends_with("-server.json") {
+            continue;
+        }
+
+        let trade_id = filename.split("-").next().unwrap().to_string();
+        let mut trade = TradePersist::restore(get_file_path(&trade_id))
+            .await
+            .unwrap();
+
+        match trade.config.swap {
+            SwapWrapper::Bob(bob) => {
+                let mut runner = bob::Runner {
+                    trade_id,
+                    inner: bob,
+                    bch: &state.bch_server,
+                    min_bch_conf: state.bch_min_conf,
+                    monerod: &state.monerod,
+                    monero_wallet: &state.monero_wallet,
+                };
+                let _ = runner.check_bch().await;
+                trade.config.swap = SwapWrapper::Bob(runner.inner);
+            }
+            SwapWrapper::Alice(alice) => {
+                let mut runner = alice::Runner {
+                    inner: alice,
+                    bch: &state.bch_server,
+                    min_bch_conf: state.bch_min_conf,
+                };
+                let _ = runner.check_bch().await;
+                trade.config.swap = SwapWrapper::Alice(runner.inner);
+            }
+        }
+        trade.save().await;
     }
 }
 
@@ -77,16 +124,11 @@ async fn main() {
     let socket = TcpStream::connect("localhost:50001").await.unwrap();
     let bch_server = blockchain::TcpElectrum::new(socket);
 
-    let _ = bch_server
-        .send("blockchain.headers.subscribe", json!([]))
-        .await
-        .unwrap();
-
     let state = Arc::new(AppState {
         bch_server: bch_server.clone(),
-        bch_addrs: Mutex::new(HashMap::new()),
         monerod,
         monero_wallet,
+        bch_min_conf: 2,
     });
 
     tokio::spawn({
@@ -94,8 +136,8 @@ async fn main() {
         async move {
             loop {
                 println!("Checking Wallet XMR...");
-                check_wallet_xmr(&state).await;
-                sleep(Duration::from_secs(10));
+                check_xmr_wallets(&state).await;
+                sleep(Duration::from_secs(20)).await;
             }
         }
     });
@@ -103,8 +145,11 @@ async fn main() {
     tokio::spawn({
         let state = state.clone();
         let mut receiver = state.bch_server.subscribe();
-
-        const BCH_MIN_CONFIRMATION: i64 = 2;
+        let _ = state
+            .bch_server
+            .send("blockchain.headers.subscribe", json!([]))
+            .await
+            .unwrap();
 
         async move {
             loop {
@@ -116,30 +161,7 @@ async fn main() {
                 }
 
                 println!("New block found. Rescanning addresses");
-                let guard = state.bch_addrs.lock().await;
-                let addresses = guard.clone();
-                drop(guard);
-
-                for (address, trade_id) in addresses {
-                    let txs =
-                        scan_address_conf_tx(&state.bch_server, &address, BCH_MIN_CONFIRMATION)
-                            .await;
-
-                    if let Ok(val) = TradePersist::restore(get_file_path(&trade_id)).await {
-                        match val.config.swap {
-                            SwapWrapper::Bob(mut v) => {
-                                for transaction in txs {
-                                    v = v.transition(Transition::BchConfirmedTx(transaction)).0;
-                                }
-                            }
-                            SwapWrapper::Alice(mut v) => {
-                                for transaction in txs {
-                                    v = v.transition(Transition::BchConfirmedTx(transaction)).0;
-                                }
-                            }
-                        }
-                    }
-                }
+                check_bch_wallets(&state).await
             }
         }
     });

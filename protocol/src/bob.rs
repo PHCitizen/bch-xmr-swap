@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     adaptor_signature::AdaptorSignature,
-    blockchain::TcpElectrum,
+    blockchain::{scan_address_conf_tx, TcpElectrum},
     contract::ContractPair,
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
@@ -99,17 +99,27 @@ impl Bob {
 
     pub fn get_swaplock_enc_sig(&self) -> Option<EncryptedSignature> {
         if let State::MoneroLocked(props) = &self.state {
-            let hash = sha256::hash(&props.alice_bch_recv);
+            let hash = sha256::hash(&props.alice_bch_recv).to_byte_array();
+            let hash = sha256::hash(&hash).to_byte_array();
             let enc_sig = AdaptorSignature::encrypted_sign(
                 &self.swap.keys.ves,
                 &props.alice_keys.spend_bch,
-                hash.as_byte_array(),
+                &hash,
             );
 
             return Some(enc_sig);
         }
 
         return None;
+    }
+
+    pub fn get_contract_pair(&self) -> Option<ContractPair> {
+        match self.state.clone() {
+            State::WithAliceKey(v) => Some(v.contract_pair),
+            State::ContractMatch(v) => Some(v.contract_pair),
+            State::VerifiedEncSig(v) => Some(v.contract_pair),
+            _ => None,
+        }
     }
 }
 
@@ -220,10 +230,13 @@ impl SwapEvents for Bob {
                 let (bch_address, xmr_address) = self.get_contract().unwrap();
 
                 self.state = State::VerifiedEncSig(props);
-
+                let bch_amount = self.swap.bch_amount;
                 return (
                     self,
-                    vec![Action::LockBch(bch_address), Action::WatchXmr(xmr_address)],
+                    vec![
+                        Action::LockBch(bch_amount, bch_address),
+                        Action::WatchXmr(xmr_address),
+                    ],
                     None,
                 );
             }
@@ -241,18 +254,26 @@ impl SwapEvents for Bob {
                     // refund_unlocker: props.refund_unlocker,
                     xmr_restore_height: props.xmr_restore_height,
                 });
-                let (bch_address, _) = self.get_contract().unwrap();
-                return (
-                    self,
-                    vec![Action::WatchBchAddress {
-                        swaplock: bch_address,
-                        refund: props.contract_pair.refund.cash_address(),
-                    }],
-                    None,
-                );
+                return (self, vec![], None);
             }
 
-            (State::MoneroLocked(props), Transition::DecSig(decsig)) => {
+            (State::MoneroLocked(props), Transition::BchConfirmedTx(transaction)) => {
+                let mut instructions = transaction.input[0].script_sig.instructions();
+                let decsig = match instructions.nth(2) {
+                    Some(Ok(bitcoincash::blockdata::script::Instruction::PushBytes(v))) => {
+                        match bitcoincash::secp256k1::ecdsa::Signature::from_der(v) {
+                            Ok(v) => {
+                                match ecdsa_fun::Signature::from_bytes(v.serialize_compact()) {
+                                    Some(v) => v,
+                                    None => return (self, vec![], Some(Error::InvalidTransaction)),
+                                }
+                            }
+                            Err(_) => return (self, vec![], Some(Error::InvalidTransaction)),
+                        }
+                    }
+                    _ => return (self, vec![], Some(Error::InvalidTransaction)),
+                };
+
                 let alice_spend = AdaptorSignature::recover_decryption_key(
                     props.alice_keys.spend_bch,
                     decsig,
@@ -304,6 +325,7 @@ pub struct Runner<'a> {
     pub bch: &'a TcpElectrum,
     pub monerod: &'a monero_rpc::DaemonJsonRpcClient,
     pub monero_wallet: &'a Mutex<monero_rpc::WalletClient>,
+    pub min_bch_conf: i64,
 }
 
 impl Runner<'_> {
@@ -312,13 +334,37 @@ impl Runner<'_> {
         monero_wallet
             .open_wallet(format!("{}_view", self.trade_id), Some("".to_owned()))
             .await?;
+
         let balance = monero_wallet.get_balance(0, None).await?;
-        let (new_state, actions, _) = self
-            .inner
-            .clone()
-            .transition(Transition::XmrLockVerified(balance.unlocked_balance));
-        // TODO: check actions
-        self.inner = new_state;
+        drop(monero_wallet);
+
+        println!(
+            "[{}]: Balance: {} Unlocked: {} Expected: {}",
+            self.trade_id, balance.balance, balance.unlocked_balance, self.inner.swap.xmr_amount
+        );
+        if balance.unlocked_balance != self.inner.swap.xmr_amount {
+            return Ok(());
+        }
+
+        let _ = self
+            .priv_transition(Transition::XmrLockVerified(balance.unlocked_balance))
+            .await;
+        Ok(())
+    }
+
+    pub async fn check_bch(&mut self) -> anyhow::Result<()> {
+        let contract = self.inner.get_contract_pair();
+        if let Some(contract) = contract {
+            let swaplock = contract.swaplock.cash_address();
+            let refund = contract.refund.cash_address();
+            for address in [swaplock, refund].into_iter() {
+                let txs = scan_address_conf_tx(&self.bch, &address, self.min_bch_conf).await;
+                println!("[{}]: {}txs address {}", self.trade_id, txs.len(), address);
+                for tx in txs {
+                    let _ = self.priv_transition(Transition::BchConfirmedTx(tx)).await;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -342,9 +388,6 @@ impl Runner<'_> {
 
         for action in actions {
             match action {
-                Action::SafeDelete => {
-                    todo!("bubble up?")
-                }
                 Action::CreateXmrView(keypair) => {
                     let address =
                         monero::Address::from_viewpair(self.inner.swap.xmr_network, &keypair);
@@ -367,11 +410,13 @@ impl Runner<'_> {
                         .transition(Transition::SetXmrRestoreHeight(height))
                         .0;
                 }
-                Action::TradeSuccess => {}
-                Action::WatchBchAddress { .. } => {}
-                Action::Refund => {}
-                Action::LockBch(_) => {}
-                Action::WatchXmr(_) => {}
+                Action::LockBch(amount, addr) => {
+                    let msg = format!("  Send {} sats to {}  ", amount, addr);
+                    println!("|{:=^width$}|", "", width = msg.len());
+                    println!("|{msg}|");
+                    println!("|{:=^width$}|", "", width = msg.len());
+                }
+                _ => {}
             }
         }
 

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::bail;
 use reqwest::StatusCode;
@@ -7,14 +7,14 @@ use serde_json::json;
 use protocol::{
     alice,
     bitcoincash::{self},
-    blockchain::{self, scan_address_conf_tx},
+    blockchain::{self},
     keys::{
         bitcoin::{self, random_private_key},
         KeyPrivate,
     },
     monero::{self},
     protocol::Swap,
-    protocol::{Action, SwapEvents, SwapWrapper, Transition},
+    protocol::{SwapEvents, SwapWrapper, Transition},
 };
 use tokio::{net::TcpStream, sync::Mutex, time::sleep};
 
@@ -24,13 +24,17 @@ async fn create_new_trade(
     client: &reqwest::Client,
     timelock1: i64,
     timelock2: i64,
+    bch_amount: bitcoincash::Amount,
+    xmr_amount: monero::Amount,
 ) -> anyhow::Result<String> {
     let response = client
         .post(format!("{BASE_URL}/trader"))
         .json(&json!({
            "path": "xmr->bch",
            "timelock1": timelock1,
-           "timelock2": timelock2
+           "timelock2": timelock2,
+           "bch_amount": bch_amount.to_sat(),
+           "xmr_amount": xmr_amount.as_pico()
         }))
         .send()
         .await?;
@@ -137,7 +141,6 @@ async fn main() -> anyhow::Result<()> {
     let req_client = reqwest::Client::new();
     let socket = TcpStream::connect("localhost:50001").await?;
     let bch_server = Arc::new(blockchain::TcpElectrum::new(socket));
-    let bch_subcriber_addr = Arc::new(Mutex::new(HashSet::<String>::new()));
 
     println!("Subscribing for new block");
     let _ = bch_server
@@ -146,14 +149,17 @@ async fn main() -> anyhow::Result<()> {
     println!("========================================");
 
     println!("Generating new keys...");
-    let refund_pk = random_private_key(bch_network);
+    let recv_pk = random_private_key(bch_network);
     let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
-    let refund_pub = refund_pk.public_key(&secp);
-    let refund_add = refund_pub.pubkey_hash();
-    let refund_script = bitcoincash::Script::new_p2pkh(&refund_add);
+    let recv_pub = recv_pk.public_key(&secp);
+    let recv_addr = recv_pub.pubkey_hash();
+    let recv_script = bitcoincash::Script::new_p2pkh(&recv_addr);
 
-    let timelock1 = 10000;
-    let timelock2 = 10000;
+    let timelock1 = 20;
+    let timelock2 = 20;
+
+    let bch_amount = bitcoincash::Amount::from_sat(100000);
+    let xmr_amount = monero::Amount::from_pico(100000);
 
     let swap = alice::Alice {
         state: alice::State::Init,
@@ -161,13 +167,13 @@ async fn main() -> anyhow::Result<()> {
             id: "".to_owned(),
             keys: KeyPrivate::random(bch_network),
 
-            bch_amount: bitcoincash::Amount::from_sat(1000),
-            xmr_amount: monero::Amount::from_pico(1000),
+            bch_amount,
+            xmr_amount,
 
-            xmr_network: monero::Network::Stagenet,
+            xmr_network: monero::Network::Mainnet,
             bch_network,
 
-            bch_recv: refund_script,
+            bch_recv: recv_script,
 
             timelock1,
             timelock2,
@@ -176,13 +182,13 @@ async fn main() -> anyhow::Result<()> {
 
     let string_json = serde_json::to_string_pretty(&swap.swap.keys).unwrap();
     println!("Private Keys: {string_json}");
+    println!("Bch recv private key: {}", recv_pk);
 
     let swap = Arc::new(Mutex::new(SwapWrapper::Alice(swap)));
     tokio::spawn({
         // process subscription
         let bch_server = bch_server.clone();
         let swap = swap.clone();
-        let bch_subcriber_addr = bch_subcriber_addr.clone();
 
         async move {
             let mut receiver = bch_server.subscribe();
@@ -198,24 +204,19 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 println!("New block found. Rescanning addresses");
-                let guard = bch_subcriber_addr.lock().await;
-                let addresses = guard.clone();
-                drop(guard);
 
-                for address in addresses {
-                    let txs =
-                        scan_address_conf_tx(&bch_server, &address, BCH_MIN_CONFIRMATION).await;
-                    for tx in txs {
-                        let mut guard = swap.lock().await;
-                        match &mut *guard {
-                            SwapWrapper::Alice(alice) => {
-                                *alice = alice.clone().transition(Transition::BchConfirmedTx(tx)).0;
-                            }
-                            SwapWrapper::Bob(bob) => {
-                                *bob = bob.clone().transition(Transition::BchConfirmedTx(tx)).0;
-                            }
-                        }
+                let mut guard = swap.lock().await;
+                match &mut *guard {
+                    SwapWrapper::Alice(alice) => {
+                        let mut runner = alice::Runner {
+                            inner: alice.clone(),
+                            bch: &bch_server,
+                            min_bch_conf: BCH_MIN_CONFIRMATION,
+                        };
+                        let _ = runner.check_bch().await;
+                        *alice = runner.inner;
                     }
+                    SwapWrapper::Bob(_) => {}
                 }
             }
         }
@@ -223,7 +224,8 @@ async fn main() -> anyhow::Result<()> {
     println!("========================================");
 
     println!("Creating new trade...");
-    let trade_id = create_new_trade(&req_client, timelock1, timelock2).await?;
+    let trade_id =
+        create_new_trade(&req_client, timelock1, timelock2, bch_amount, xmr_amount).await?;
     println!("Trade id: {trade_id}");
     println!("========================================");
 
@@ -243,55 +245,31 @@ async fn main() -> anyhow::Result<()> {
         match get_server_transition(&req_client, &trade_id).await {
             Err(e) => println!("============= {:?}", e),
             Ok(transition) => match transition {
-                None => {}
-                Some(v) => {
-                    let transition = match v {
-                        Transition::Msg0 { .. } => v,
-                        Transition::Contract { .. } => v,
-                        Transition::EncSig(_) => v,
-                        _ => {
-                            bail!("Private transition receive from server")
-                        }
-                    };
-
-                    // let (action, error) = swap.lock().await.transition(transition);
+                None => {
+                    sleep(Duration::from_secs(5)).await;
+                }
+                Some(transition) => {
                     let mut guard = swap.lock().await;
-                    let (actions, error) = match &mut *guard {
+                    match &mut *guard {
                         SwapWrapper::Alice(alice) => {
-                            let (new, actions, error) = alice.clone().transition(transition);
-                            *alice = new;
-                            (actions, error)
-                        }
-                        SwapWrapper::Bob(bob) => {
-                            let (new, actions, error) = bob.clone().transition(transition);
-                            *bob = new;
-                            (actions, error)
-                        }
-                    };
-                    drop(guard);
+                            let mut runner = alice::Runner {
+                                inner: alice.clone(),
+                                min_bch_conf: BCH_MIN_CONFIRMATION,
+                                bch: &bch_server,
+                            };
 
-                    for action in actions {
-                        println!("Action: {:?}", action);
-
-                        match action {
-                            Action::WatchBchAddress { swaplock, refund } => {
-                                println!("Waiting for bch to be locked");
-                                let mut guard = bch_subcriber_addr.lock().await;
-                                let _ = guard.insert(swaplock);
-                                let _ = guard.insert(refund);
+                            if let Err(e) = runner.pub_transition(transition).await {
+                                dbg!(e);
                             }
-                            _ => todo!(),
-                        }
-                    }
 
-                    if let Some(error) = error {
-                        println!("Error: {:?}", error);
-                    }
+                            *alice = runner.inner;
+                        }
+                        SwapWrapper::Bob(_) => {}
+                    };
                 }
             },
         };
 
-        println!("========================================");
         sleep(Duration::from_secs(5)).await;
     }
 }

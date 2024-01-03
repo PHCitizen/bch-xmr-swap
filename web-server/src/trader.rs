@@ -7,13 +7,12 @@ use axum::{
     Json, Router,
 };
 use protocol::{
-    alice::{self, Alice},
     bitcoincash,
     bob::{self, Bob},
     keys::{bitcoin::random_private_key, bitcoin::Network, KeyPrivate},
-    monero, monero_rpc,
+    monero,
     persist::{Config, Error as PersistError, TradePersist},
-    protocol::{Action, Swap, SwapEvents, SwapWrapper, Transition},
+    protocol::{Swap, SwapEvents, SwapWrapper, Transition},
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +40,10 @@ pub fn get_file_path(trade_id: &str) -> String {
 #[derive(Deserialize)]
 struct CreateRequest {
     path: String,
+    #[serde(with = "bitcoincash::util::amount::serde::as_sat")]
+    bch_amount: bitcoincash::Amount,
+    #[serde(with = "monero::util::amount::serde::as_pico")]
+    xmr_amount: monero::Amount,
     timelock1: i64,
     timelock2: i64,
 }
@@ -54,13 +57,18 @@ async fn create(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     JsonRej(request): JsonRej<CreateRequest>,
 ) -> ApiResult<Json<CreateResponse>> {
+    if request.bch_amount.to_sat() != 100000 || request.xmr_amount.as_pico() != 100000 {
+        return Err(Error::new(StatusCode::FORBIDDEN, "Invalid amount"));
+    }
+
+    if request.timelock1 != 20 || request.timelock2 != 20 {
+        return Err(Error::new(StatusCode::FORBIDDEN, "Invalid timelock"));
+    }
+
     let trade_id = random_str(10);
 
     let bch_network = Network::Testnet;
-    let xmr_network = monero::Network::Stagenet;
-
-    let bch_amount = bitcoincash::Amount::from_sat(1000);
-    let xmr_amount = monero::Amount::from_pico(10000);
+    let xmr_network = monero::Network::Mainnet;
 
     let (refund_priv, refund_script) = {
         let refund_priv = random_private_key(bch_network);
@@ -73,8 +81,8 @@ async fn create(
     let swap = Swap {
         id: trade_id.clone(),
         keys: KeyPrivate::random(bch_network),
-        bch_amount,
-        xmr_amount,
+        bch_amount: request.bch_amount,
+        xmr_amount: request.xmr_amount,
         xmr_network,
         bch_network,
         bch_recv: refund_script,
@@ -149,11 +157,12 @@ async fn transition(
                 bch: &state.bch_server,
                 monero_wallet: &state.monero_wallet,
                 monerod: &state.monerod,
+                min_bch_conf: state.bch_min_conf,
             };
             bob.pub_transition(request).await?;
 
             trade.config.swap = SwapWrapper::Bob(bob.inner);
-            trade.save();
+            trade.save().await;
         }
         SwapWrapper::Alice(_) => {}
     }
