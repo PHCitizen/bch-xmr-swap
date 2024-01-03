@@ -209,13 +209,15 @@ impl SwapEvents for Bob {
 
             (State::ContractMatch(props), Transition::EncSig(enc_sig)) => {
                 // check if decrypted sig can unlock Refund.cash contract
-                let bob_receiving_hash = sha256::hash(self.swap.bch_recv.as_bytes());
+                let bob_receiving_hash =
+                    sha256::hash(self.swap.bch_recv.as_bytes()).to_byte_array();
+                let bob_receiving_hash = sha256::hash(&bob_receiving_hash).to_byte_array();
                 let dec_sig =
                     AdaptorSignature::decrypt_signature(&self.swap.keys.monero_spend, enc_sig);
 
                 let is_valid = AdaptorSignature::verify(
                     props.alice_keys.ves.clone(),
-                    bob_receiving_hash.as_byte_array(),
+                    &bob_receiving_hash,
                     &dec_sig,
                 );
 
