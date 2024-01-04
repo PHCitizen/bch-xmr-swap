@@ -344,12 +344,18 @@ impl Runner<'_> {
             "[{}]: Balance: {} Unlocked: {} Expected: {}",
             self.trade_id, balance.balance, balance.unlocked_balance, self.inner.swap.xmr_amount
         );
-        if balance.unlocked_balance != self.inner.swap.xmr_amount {
+
+        let balance = match self.inner.swap.xmr_network {
+            monero::Network::Mainnet => balance.unlocked_balance,
+            _ => balance.balance,
+        };
+
+        if balance != self.inner.swap.xmr_amount {
             return Ok(());
         }
 
         let _ = self
-            .priv_transition(Transition::XmrLockVerified(balance.unlocked_balance))
+            .priv_transition(Transition::XmrLockVerified(balance))
             .await;
         Ok(())
     }

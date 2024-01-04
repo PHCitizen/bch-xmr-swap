@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bitcoincash::Transaction;
 use serde::Deserialize;
@@ -10,6 +10,7 @@ use tokio::{
         TcpStream,
     },
     sync::{broadcast, oneshot, Mutex},
+    time::sleep,
 };
 
 #[derive(Deserialize)]
@@ -60,12 +61,24 @@ impl TcpElectrum {
             }
         });
 
-        TcpElectrum {
+        let server = TcpElectrum {
             id,
             futures,
             producer,
             stream_write,
-        }
+        };
+
+        tokio::spawn({
+            let server = server.clone();
+            async move {
+                loop {
+                    let _ = server.send("server.ping", json!([])).await;
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        });
+
+        server
     }
 
     async fn process_reads(
