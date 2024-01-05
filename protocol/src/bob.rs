@@ -97,7 +97,11 @@ pub enum State {
     VerifiedEncSig(Value1),
     MoneroLocked(Value2),
     ProceedRefund(Value3),
-    SwapSuccess(#[serde(with = "monero_key_pair")] monero::KeyPair, u64),
+    SwapSuccess(
+        #[serde(with = "monero_key_pair")] monero::KeyPair,
+        monero::Address,
+        u64,
+    ),
 }
 
 impl fmt::Display for State {
@@ -108,7 +112,7 @@ impl fmt::Display for State {
             State::ContractMatch(_) => write!(f, "BobState::ContractMatch"),
             State::VerifiedEncSig(_) => write!(f, "BobState::VerifiedEncSig"),
             State::MoneroLocked(_) => write!(f, "BobState::MoneroLocked"),
-            State::SwapSuccess(_, _) => write!(f, "BobState::SwapSuccess"),
+            State::SwapSuccess(_, _, _) => write!(f, "BobState::SwapSuccess"),
             State::ProceedRefund(_) => write!(f, "BobState::ProceedRefund"),
         }
     }
@@ -444,7 +448,11 @@ impl SwapEvents for Bob {
                     spend: self.swap.keys.monero_spend + alice_spend,
                 };
 
-                self.state = State::SwapSuccess(key_pair, props.xmr_restore_height);
+                self.state = State::SwapSuccess(
+                    key_pair,
+                    monero::Address::from_keypair(self.swap.xmr_network, &key_pair),
+                    props.xmr_restore_height,
+                );
 
                 return (self, vec![Action::TradeSuccess], None);
             }
