@@ -96,6 +96,7 @@ pub struct ContractPair {
     alice_receiving: Vec<u8>,
     bob_receiving: Vec<u8>,
     swaplock_in_sats: u64,
+    pub mining_fee: u64,
 }
 
 impl ContractPair {
@@ -141,32 +142,38 @@ impl ContractPair {
             alice_receiving,
             bob_receiving,
             swaplock_in_sats: swaplock_in.to_sat(),
+            mining_fee,
         })
     }
 
     pub fn analyze_tx(
         &self,
-        transaction: Transaction,
+        transaction: &Transaction,
     ) -> Option<(bitcoincash::OutPoint, TransactionType)> {
         let swaplock = self.swaplock.locking_script();
         let refund = self.refund.locking_script();
 
         if transaction.input.len() == 1 && transaction.output.len() == 1 {
+            let outpoint = bitcoincash::OutPoint::new(transaction.txid(), 0);
             let input = transaction.input[0].script_sig.to_p2sh().to_bytes();
-            let output = transaction.output[0].script_pubkey.to_bytes();
+            let output = &transaction.output[0];
+            let output_bytes = output.script_pubkey.to_bytes();
 
-            if input == swaplock || input == refund {
-                let tx_type;
-                if output == self.alice_receiving {
-                    tx_type = TransactionType::ToAlice;
-                } else if output == self.bob_receiving {
-                    tx_type = TransactionType::ToBob;
-                // } else if output == refund {
-                } else {
-                    tx_type = TransactionType::ToRefund;
+            // check for dummy tx
+            if input == swaplock && output.value == self.swaplock_in_sats - self.mining_fee {
+                if output_bytes == self.alice_receiving {
+                    return Some((outpoint, TransactionType::ToAlice));
+                } else if output_bytes == refund {
+                    return Some((outpoint, TransactionType::ToRefund));
                 }
+            }
 
-                return Some((bitcoincash::OutPoint::new(transaction.txid(), 0), tx_type));
+            if input == refund && output.value == self.swaplock_in_sats - (self.mining_fee * 2) {
+                if output_bytes == self.bob_receiving {
+                    return Some((outpoint, TransactionType::ToBob));
+                } else if output_bytes == self.alice_receiving {
+                    return Some((outpoint, TransactionType::ToAlice));
+                }
             }
         }
 

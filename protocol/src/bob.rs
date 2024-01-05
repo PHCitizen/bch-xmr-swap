@@ -17,18 +17,24 @@
 //!                 If it does, get decsig, Transition::DecSig
 //!     SwapSuccess(monero::KeyPair, restore_height: u64)
 
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use anyhow::bail;
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
+use bitcoincash::{
+    consensus::Encodable, PackedLockTime, Script, Sequence, Transaction, TxIn, TxOut,
+};
 use ecdsa_fun::adaptor::EncryptedSignature;
+use hex::ToHex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use serde_json::json;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::{
     adaptor_signature::AdaptorSignature,
+    bitcoincash::{secp256k1::ecdsa, OutPoint},
     blockchain::{scan_address_conf_tx, TcpElectrum},
-    contract::ContractPair,
+    contract::{ContractPair, TransactionType},
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Action, Error, Swap, SwapEvents, Transition},
@@ -47,6 +53,18 @@ pub struct Value0 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Value1 {
+    alice_keys: KeyPublicWithoutProof,
+    #[serde(with = "hex")]
+    alice_bch_recv: Vec<u8>,
+    contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
+    pub shared_keypair: monero::ViewPair,
+    xmr_restore_height: u64,
+    dec_sig: ecdsa::Signature,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Value2 {
     alice_keys: KeyPublicWithoutProof,
     #[serde(with = "hex")]
@@ -54,8 +72,21 @@ pub struct Value2 {
     // contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
-    // refund_unlocker: Signature,
     xmr_restore_height: u64,
+    dec_sig: ecdsa::Signature,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Value3 {
+    alice_keys: KeyPublicWithoutProof,
+    #[serde(with = "hex")]
+    alice_bch_recv: Vec<u8>,
+    contract_pair: ContractPair,
+    #[serde(with = "monero_view_pair")]
+    pub shared_keypair: monero::ViewPair,
+    xmr_restore_height: u64,
+    dec_sig: ecdsa::Signature,
+    outpoint: OutPoint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,8 +94,9 @@ pub enum State {
     Init,
     WithAliceKey(Value0),
     ContractMatch(Value0),
-    VerifiedEncSig(Value0),
+    VerifiedEncSig(Value1),
     MoneroLocked(Value2),
+    ProceedRefund(Value3),
     SwapSuccess(#[serde(with = "monero_key_pair")] monero::KeyPair, u64),
 }
 
@@ -77,6 +109,7 @@ impl fmt::Display for State {
             State::VerifiedEncSig(_) => write!(f, "BobState::VerifiedEncSig"),
             State::MoneroLocked(_) => write!(f, "BobState::MoneroLocked"),
             State::SwapSuccess(_, _) => write!(f, "BobState::SwapSuccess"),
+            State::ProceedRefund(_) => write!(f, "BobState::ProceedRefund"),
         }
     }
 }
@@ -136,21 +169,64 @@ impl Bob {
             _ => None,
         }
     }
+
+    pub fn refund(&self) -> Option<(Transaction, Transaction)> {
+        if let State::ProceedRefund(props) = &self.state {
+            let mining_fee = props.contract_pair.mining_fee;
+
+            let tx1 = {
+                let unlocker = props.contract_pair.swaplock.unlocking_script(&[]);
+                Transaction {
+                    version: 2,
+                    lock_time: PackedLockTime(0), // TODO: Should we use current time?
+                    input: vec![TxIn {
+                        sequence: Sequence(props.contract_pair.swaplock.timelock),
+                        previous_output: props.outpoint,
+                        script_sig: Script::from(unlocker),
+                        ..Default::default()
+                    }],
+                    output: vec![TxOut {
+                        value: self.swap.bch_amount.to_sat() - mining_fee,
+                        script_pubkey: Script::from(props.contract_pair.refund.locking_script()),
+                        token: None,
+                    }],
+                }
+            };
+
+            let tx2 = {
+                let unlocker = props
+                    .contract_pair
+                    .refund
+                    .unlocking_script(&props.dec_sig.serialize_der());
+                Transaction {
+                    version: 2,
+                    lock_time: PackedLockTime(0), // TODO: Should we use current time?
+                    input: vec![TxIn {
+                        sequence: Sequence(0),
+                        previous_output: OutPoint::new(tx1.txid(), 0),
+                        script_sig: Script::from(unlocker),
+                        ..Default::default()
+                    }],
+                    output: vec![TxOut {
+                        value: self.swap.bch_amount.to_sat() - (mining_fee * 2),
+                        script_pubkey: self.swap.bch_recv.clone(),
+                        token: None,
+                    }],
+                }
+            };
+
+            return Some((tx1, tx2));
+        }
+
+        None
+    }
 }
 
 #[async_trait::async_trait]
 impl SwapEvents for Bob {
     type State = Bob;
     fn transition(mut self, transition: Transition) -> (Self::State, Vec<Action>, Option<Error>) {
-        match &self.state {
-            State::Init => print!("Init - "),
-            State::WithAliceKey(_) => print!("WithAliceKey - "),
-            State::ContractMatch(_) => print!("ContractMatch - "),
-            State::VerifiedEncSig(_) => print!("VerifiedEncSig - "),
-            State::MoneroLocked(_) => print!("MoneroLocked - "),
-            State::SwapSuccess(_, _) => print!("SwapSuccess - "),
-        }
-        println!("{}", &transition);
+        println!("{} - {}", &self.state, &transition);
 
         if let Transition::SetXmrRestoreHeight(height) = transition {
             match &mut self.state {
@@ -250,9 +326,28 @@ impl SwapEvents for Bob {
                     );
                 }
 
+                let dec_sig = match ecdsa::Signature::from_compact(&dec_sig.to_bytes()) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return (
+                            self,
+                            vec![Action::SafeDelete],
+                            Some(Error::InvalidSignature),
+                        )
+                    }
+                };
+
                 let (bch_address, xmr_address) = self.get_contract().unwrap();
 
-                self.state = State::VerifiedEncSig(props);
+                self.state = State::VerifiedEncSig(Value1 {
+                    alice_bch_recv: props.alice_bch_recv,
+                    contract_pair: props.contract_pair,
+                    shared_keypair: props.shared_keypair,
+                    alice_keys: props.alice_keys,
+                    xmr_restore_height: props.xmr_restore_height,
+
+                    dec_sig,
+                });
                 let bch_amount = self.swap.bch_amount;
                 return (
                     self,
@@ -274,13 +369,53 @@ impl SwapEvents for Bob {
                     alice_bch_recv: props.alice_bch_recv,
                     // contract_pair: props.contract_pair,
                     shared_keypair: props.shared_keypair,
-                    // refund_unlocker: props.refund_unlocker,
+                    dec_sig: props.dec_sig,
                     xmr_restore_height: props.xmr_restore_height,
                 });
                 return (self, vec![], None);
             }
 
-            (State::MoneroLocked(props), Transition::BchConfirmedTx(transaction)) => {
+            (State::VerifiedEncSig(props), Transition::BchConfirmedTx(transaction, conf)) => {
+                // The runner are still giving prev transaction while alice havent lock xmr
+                // we use it to track if tx sent to swaplock has enough age for refund
+
+                match props.contract_pair.analyze_tx(&transaction) {
+                    // When timelock1 expire
+                    Some((outpoint, TransactionType::ToSwapLock)) => {
+                        if conf < self.swap.timelock1 {
+                            return (self, vec![], None);
+                        }
+
+                        self.state = State::ProceedRefund(Value3 {
+                            alice_keys: props.alice_keys,
+                            alice_bch_recv: props.alice_bch_recv,
+                            contract_pair: props.contract_pair,
+                            shared_keypair: props.shared_keypair,
+                            dec_sig: props.dec_sig,
+                            xmr_restore_height: props.xmr_restore_height,
+                            outpoint,
+                        });
+
+                        return (self, vec![Action::UnlockBchFallback], None);
+                    }
+                    // when tx send to refund
+                    Some((outpoint, TransactionType::ToRefund)) => {
+                        self.state = State::ProceedRefund(Value3 {
+                            alice_keys: props.alice_keys,
+                            alice_bch_recv: props.alice_bch_recv,
+                            contract_pair: props.contract_pair,
+                            shared_keypair: props.shared_keypair,
+                            dec_sig: props.dec_sig,
+                            xmr_restore_height: props.xmr_restore_height,
+                            outpoint,
+                        });
+                        return (self, vec![Action::UnlockBchFallback], None);
+                    }
+                    _ => return (self, vec![], None),
+                }
+            }
+
+            (State::MoneroLocked(props), Transition::BchConfirmedTx(transaction, _)) => {
                 let mut instructions = transaction.input[0].script_sig.instructions();
                 let decsig = match instructions.nth(2) {
                     Some(Ok(bitcoincash::blockdata::script::Instruction::PushBytes(v))) => {
@@ -348,7 +483,7 @@ pub struct Runner<'a> {
     pub bch: &'a TcpElectrum,
     pub monerod: &'a monero_rpc::DaemonJsonRpcClient,
     pub monero_wallet: &'a Mutex<monero_rpc::WalletClient>,
-    pub min_bch_conf: i64,
+    pub min_bch_conf: u32,
 }
 
 impl Runner<'_> {
@@ -389,8 +524,10 @@ impl Runner<'_> {
             for address in [swaplock, refund].into_iter() {
                 let txs = scan_address_conf_tx(&self.bch, &address, self.min_bch_conf).await;
                 println!("[{}]: {}txs address {}", self.trade_id, txs.len(), address);
-                for tx in txs {
-                    let _ = self.priv_transition(Transition::BchConfirmedTx(tx)).await;
+                for (tx, conf) in txs {
+                    let _ = self
+                        .priv_transition(Transition::BchConfirmedTx(tx, conf))
+                        .await;
                 }
             }
         }
@@ -444,6 +581,35 @@ impl Runner<'_> {
                     println!("|{:=^width$}|", "", width = msg.len());
                     println!("|{msg}|");
                     println!("|{:=^width$}|", "", width = msg.len());
+                }
+                Action::UnlockBchFallback => {
+                    let (tx1, tx2) = new_state.refund().unwrap();
+
+                    let mut buffer = Vec::new();
+                    tx1.consensus_encode(&mut buffer).unwrap();
+                    let tx_hex: String = buffer.encode_hex();
+
+                    println!("Broadcasting tx. SwapLock -> Refund: {}", tx1.txid());
+                    let transaction_resp = self
+                        .bch
+                        .send("blockchain.transaction.broadcast", json!([tx_hex]))
+                        .await
+                        .unwrap();
+                    dbg!(transaction_resp);
+
+                    sleep(Duration::from_secs(5)).await;
+
+                    let mut buffer = Vec::new();
+                    tx2.consensus_encode(&mut buffer).unwrap();
+                    let tx_hex: String = buffer.encode_hex();
+
+                    println!("Broadcasting tx. Refund -> Bob Output: {}", tx2.txid());
+                    let transaction_resp = self
+                        .bch
+                        .send("blockchain.transaction.broadcast", json!([tx_hex]))
+                        .await
+                        .unwrap();
+                    dbg!(transaction_resp);
                 }
                 _ => {}
             }
