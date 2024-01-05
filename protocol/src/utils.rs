@@ -1,5 +1,7 @@
 // #[serde(with = "path")]
 
+use bitcoincash::{secp256k1::ecdsa::Signature, Script};
+
 pub mod monero_private_key {
     use serde::{de::Error, Deserialize, Deserializer, Serializer};
     use std::str::FromStr;
@@ -191,4 +193,19 @@ pub mod monero_public_key {
         let amount = String::deserialize(deserializer)?;
         Ok(monero::PublicKey::from_str(&amount).map_err(|e| Error::custom(e.to_string()))?)
     }
+}
+
+pub fn get_signature(script: Script) -> Option<Signature> {
+    for instruction in script.instructions_minimal() {
+        match instruction {
+            Ok(bitcoincash::blockdata::script::Instruction::PushBytes(bytes)) => {
+                match bitcoincash::secp256k1::ecdsa::Signature::from_der(bytes) {
+                    Ok(sig) => return Some(sig),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    return None;
 }

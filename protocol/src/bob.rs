@@ -38,7 +38,7 @@ use crate::{
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Action, Error, Swap, SwapEvents, Transition},
-    utils::{monero_key_pair, monero_view_pair},
+    utils::{get_signature, monero_key_pair, monero_view_pair},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ pub struct Value2 {
     alice_keys: KeyPublicWithoutProof,
     #[serde(with = "hex")]
     alice_bch_recv: Vec<u8>,
-    // contract_pair: ContractPair,
+    contract_pair: ContractPair,
     #[serde(with = "monero_view_pair")]
     shared_keypair: monero::ViewPair,
     xmr_restore_height: u64,
@@ -170,6 +170,7 @@ impl Bob {
             State::WithAliceKey(v) => Some(v.contract_pair),
             State::ContractMatch(v) => Some(v.contract_pair),
             State::VerifiedEncSig(v) => Some(v.contract_pair),
+            State::MoneroLocked(v) => Some(v.contract_pair),
             _ => None,
         }
     }
@@ -371,7 +372,7 @@ impl SwapEvents for Bob {
                 self.state = State::MoneroLocked(Value2 {
                     alice_keys: props.alice_keys,
                     alice_bch_recv: props.alice_bch_recv,
-                    // contract_pair: props.contract_pair,
+                    contract_pair: props.contract_pair,
                     shared_keypair: props.shared_keypair,
                     dec_sig: props.dec_sig,
                     xmr_restore_height: props.xmr_restore_height,
@@ -420,20 +421,21 @@ impl SwapEvents for Bob {
             }
 
             (State::MoneroLocked(props), Transition::BchConfirmedTx(transaction, _)) => {
-                let mut instructions = transaction.input[0].script_sig.instructions();
-                let decsig = match instructions.nth(2) {
-                    Some(Ok(bitcoincash::blockdata::script::Instruction::PushBytes(v))) => {
-                        match bitcoincash::secp256k1::ecdsa::Signature::from_der(v) {
-                            Ok(v) => {
-                                match ecdsa_fun::Signature::from_bytes(v.serialize_compact()) {
-                                    Some(v) => v,
-                                    None => return (self, vec![], Some(Error::InvalidTransaction)),
-                                }
-                            }
-                            Err(_) => return (self, vec![], Some(Error::InvalidTransaction)),
-                        }
+                let scriptsig = match props.contract_pair.analyze_tx(&transaction) {
+                    Some((_, TransactionType::SwapLockToAlice)) => {
+                        transaction.input[0].script_sig.clone()
                     }
                     _ => return (self, vec![], Some(Error::InvalidTransaction)),
+                };
+
+                let decsig = match get_signature(scriptsig) {
+                    Some(sig) => sig,
+                    None => return (self, vec![], Some(Error::InvalidTransaction)),
+                };
+
+                let decsig = match ecdsa_fun::Signature::from_bytes(decsig.serialize_compact()) {
+                    Some(v) => v,
+                    None => return (self, vec![], Some(Error::InvalidTransaction)),
                 };
 
                 let alice_spend = AdaptorSignature::recover_decryption_key(
@@ -533,9 +535,12 @@ impl Runner<'_> {
                 let txs = scan_address_conf_tx(&self.bch, &address, self.min_bch_conf).await;
                 println!("[{}]: {}txs address {}", self.trade_id, txs.len(), address);
                 for (tx, conf) in txs {
-                    let _ = self
+                    let check_bch = self
                         .priv_transition(Transition::BchConfirmedTx(tx, conf))
                         .await;
+                    if let Err(check_bch_err) = check_bch {
+                        dbg!(check_bch_err);
+                    }
                 }
             }
         }
@@ -585,7 +590,7 @@ impl Runner<'_> {
                         .0;
                 }
                 Action::LockBch(amount, addr) => {
-                    let msg = format!("  Send {} sats to {}  ", amount, addr);
+                    let msg = format!("  Send {} to {}  ", amount, addr);
                     println!("|{:=^width$}|", "", width = msg.len());
                     println!("|{msg}|");
                     println!("|{:=^width$}|", "", width = msg.len());
