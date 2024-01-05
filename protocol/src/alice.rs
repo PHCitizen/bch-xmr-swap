@@ -39,7 +39,7 @@ use crate::{
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Action, Error, Swap, SwapEvents, Transition},
-    utils::{monero_key_pair, monero_view_pair},
+    utils::{get_signature, monero_key_pair, monero_view_pair},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,19 +284,12 @@ impl SwapEvents for Alice {
                 if let Some((_, TransactionType::ToBob)) =
                     props.contract_pair.analyze_tx(&transaction)
                 {
-                    let mut instructions = transaction.input[0].script_sig.instructions();
-                    let decsig = match instructions.nth(2) {
-                        Some(Ok(bitcoincash::blockdata::script::Instruction::PushBytes(v))) => {
-                            match bitcoincash::secp256k1::ecdsa::Signature::from_der(v) {
-                                Ok(v) => {
-                                    match ecdsa_fun::Signature::from_bytes(v.serialize_compact()) {
-                                        Some(v) => v,
-                                        None => {
-                                            return (self, vec![], Some(Error::InvalidTransaction))
-                                        }
-                                    }
-                                }
-                                Err(_) => return (self, vec![], Some(Error::InvalidTransaction)),
+                    let script = transaction.input[0].script_sig.clone();
+                    let decsig = match get_signature(script) {
+                        Some(sig) => {
+                            match ecdsa_fun::Signature::from_bytes(sig.serialize_compact()) {
+                                Some(v) => v,
+                                None => return (self, vec![], Some(Error::InvalidTransaction)),
                             }
                         }
                         _ => return (self, vec![], Some(Error::InvalidTransaction)),
