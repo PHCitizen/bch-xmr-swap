@@ -13,10 +13,11 @@ use protocol::{
         KeyPrivate,
     },
     monero::{self},
+    persist::{Config, TradePersist},
     protocol::Swap,
     protocol::{SwapEvents, SwapWrapper, Transition},
 };
-use tokio::{net::TcpStream, sync::Mutex, time::sleep};
+use tokio::{fs, io::AsyncWriteExt, net::TcpStream, time::sleep};
 
 const BASE_URL: &str = "http://localhost:8080";
 
@@ -89,48 +90,8 @@ async fn send_transition(
     }
 }
 
-/// This only check if we already sent transition,
-/// if we do just skip it and return success
-struct TransitionManager {
-    enc_sig_sent: bool,
-    wrapper: Arc<Mutex<SwapWrapper>>,
-}
-
-impl TransitionManager {
-    fn new(wrapper: Arc<Mutex<SwapWrapper>>) -> Self {
-        Self {
-            wrapper,
-            enc_sig_sent: false,
-        }
-    }
-
-    async fn send_transition(&mut self) -> Option<Transition> {
-        let guard = self.wrapper.lock().await;
-        let transition = match &*guard {
-            SwapWrapper::Alice(v) => v.get_transition(),
-            SwapWrapper::Bob(v) => v.get_transition(),
-        };
-        drop(guard);
-
-        if let Some(transition) = transition {
-            // Check if we already sent it, skip if we do
-            match transition {
-                Transition::EncSig(_) if self.enc_sig_sent => return None,
-                _ => {
-                    return Some(transition);
-                }
-            }
-        }
-
-        None
-    }
-
-    fn sent(&mut self, transition: Transition) {
-        match transition {
-            Transition::EncSig(_) => self.enc_sig_sent = true,
-            _ => {}
-        }
-    }
+pub fn get_file_path(trade_id: &str) -> String {
+    format!("./.trades/ongoing/{trade_id}-client.json")
 }
 
 #[tokio::main]
@@ -138,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
     let bch_min_confirmation = 1;
 
     let fullcrum_tcp = "localhost:50001";
-    let monero_network = monero::Network::Stagenet;
-    let bch_network = bitcoin::Network::Testnet;
+    let monero_network = monero::Network::Mainnet;
+    let bch_network = bitcoin::Network::Regtest;
 
     // ===================================================
 
@@ -154,9 +115,9 @@ async fn main() -> anyhow::Result<()> {
     println!("========================================");
 
     println!("Generating new keys...");
-    let recv_pk = random_private_key(bch_network);
+    let recv_privkey = random_private_key(bch_network);
     let secp = bitcoincash::secp256k1::Secp256k1::signing_only();
-    let recv_pub = recv_pk.public_key(&secp);
+    let recv_pub = recv_privkey.public_key(&secp);
     let recv_addr = recv_pub.pubkey_hash();
     let recv_script = bitcoincash::Script::new_p2pkh(&recv_addr);
 
@@ -187,13 +148,21 @@ async fn main() -> anyhow::Result<()> {
 
     let string_json = serde_json::to_string_pretty(&swap.swap.keys).unwrap();
     println!("Private Keys: {string_json}");
-    println!("Bch recv private key: {}", recv_pk);
+    println!("Bch recv private key: {}", recv_privkey);
 
-    let swap = Arc::new(Mutex::new(SwapWrapper::Alice(swap)));
+    let swap = SwapWrapper::Alice(swap);
+
+    println!("========================================");
+
+    println!("Creating new trade...");
+    let trade_id =
+        create_new_trade(&req_client, timelock1, timelock2, bch_amount, xmr_amount).await?;
+    println!("Trade id: {trade_id}");
+
     tokio::spawn({
         // process subscription
         let bch_server = bch_server.clone();
-        let swap = swap.clone();
+        let trade_id = trade_id.clone();
 
         async move {
             let mut receiver = bch_server.subscribe();
@@ -210,42 +179,58 @@ async fn main() -> anyhow::Result<()> {
 
                 println!("New block found. Rescanning addresses");
 
-                let mut guard = swap.lock().await;
-                match &mut *guard {
+                let mut trade = TradePersist::restore(get_file_path(&trade_id))
+                    .await
+                    .unwrap();
+                match trade.config.swap {
+                    SwapWrapper::Bob(_) => {}
                     SwapWrapper::Alice(alice) => {
                         let mut runner = alice::Runner {
-                            inner: alice.clone(),
+                            inner: alice,
                             bch: &bch_server,
                             min_bch_conf: bch_min_confirmation,
                         };
                         let _ = runner.check_bch().await;
-                        *alice = runner.inner;
+                        trade.config.swap = SwapWrapper::Alice(runner.inner);
+                        trade.save().await;
                     }
-                    SwapWrapper::Bob(_) => {}
-                }
+                };
             }
         }
     });
-    println!("========================================");
 
-    println!("Creating new trade...");
-    let trade_id =
-        create_new_trade(&req_client, timelock1, timelock2, bch_amount, xmr_amount).await?;
-    println!("Trade id: {trade_id}");
-    println!("========================================");
+    let serialized = serde_json::to_vec_pretty(&Config {
+        swap,
+        refund_private_key: recv_privkey,
+    })?;
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(get_file_path(&trade_id))
+        .await?
+        .write(&serialized)
+        .await?;
 
-    let mut transition_manager = TransitionManager::new(swap.clone());
+    println!("========================================");
 
     loop {
-        if let Some(tr) = transition_manager.send_transition().await {
-            match send_transition(&req_client, &trade_id, &tr).await {
-                Ok(_) => transition_manager.sent(tr),
-                Err(e) => {
-                    println!("{:?}", e);
-                    sleep(Duration::from_secs(10)).await;
+        let trade = TradePersist::restore(get_file_path(&trade_id))
+            .await
+            .unwrap();
+        match &trade.config.swap {
+            SwapWrapper::Bob(_) => {}
+            SwapWrapper::Alice(inner) => {
+                let transition = inner.get_transition();
+                drop(trade);
+
+                if let Some(transition) = transition {
+                    if let Err(e) = send_transition(&req_client, &trade_id, &transition).await {
+                        println!("{:?}", e);
+                        sleep(Duration::from_secs(10)).await;
+                    }
                 }
             }
-        }
+        };
 
         match get_server_transition(&req_client, &trade_id).await {
             Err(e) => println!("============= {:?}", e),
@@ -254,23 +239,22 @@ async fn main() -> anyhow::Result<()> {
                     sleep(Duration::from_secs(5)).await;
                 }
                 Some(transition) => {
-                    let mut guard = swap.lock().await;
-                    match &mut *guard {
+                    let mut trade = TradePersist::restore(get_file_path(&trade_id))
+                        .await
+                        .unwrap();
+                    match trade.config.swap {
                         SwapWrapper::Alice(alice) => {
                             let mut runner = alice::Runner {
-                                inner: alice.clone(),
+                                inner: alice,
                                 min_bch_conf: bch_min_confirmation,
                                 bch: &bch_server,
                             };
-
-                            if let Err(e) = runner.pub_transition(transition).await {
-                                dbg!(e);
-                            }
-
-                            *alice = runner.inner;
+                            runner.pub_transition(transition).await?;
+                            trade.config.swap = SwapWrapper::Alice(runner.inner);
+                            trade.save().await;
                         }
                         SwapWrapper::Bob(_) => {}
-                    };
+                    }
                 }
             },
         };

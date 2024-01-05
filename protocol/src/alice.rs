@@ -39,7 +39,7 @@ use crate::{
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
     protocol::{Action, Error, Swap, SwapEvents, Transition},
-    utils::monero_view_pair,
+    utils::{monero_key_pair, monero_view_pair},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +86,10 @@ pub enum State {
     ContractMatch(Value0),
     BchLocked(Value1),
     ValidEncSig(Value2),
+    Refund(
+        monero::Address,
+        #[serde(with = "monero_key_pair")] monero::KeyPair,
+    ),
 }
 
 impl fmt::Display for State {
@@ -96,6 +100,7 @@ impl fmt::Display for State {
             State::ContractMatch(_) => write!(f, "AliceState:ContractMatch"),
             State::BchLocked(_) => write!(f, "AliceState:BchLocked"),
             State::ValidEncSig(_) => write!(f, "AliceState:ValidEncSig"),
+            State::Refund(_, _) => write!(f, "AliceState:Refund"),
         }
     }
 }
@@ -123,27 +128,25 @@ impl Alice {
     }
 
     pub fn get_refunc_enc_sig(&self) -> Option<EncryptedSignature> {
-        if let State::ContractMatch(props) = &self.state {
-            let hash = sha256::hash(&props.bob_bch_recv).to_byte_array();
-            let hash = sha256::hash(&hash).to_byte_array();
-            let enc_sig = AdaptorSignature::encrypted_sign(
-                &self.swap.keys.ves,
-                &props.bob_keys.spend_bch,
-                &hash,
-            );
-            return Some(enc_sig);
-        }
+        let (spend, recv) = match &self.state {
+            State::ContractMatch(props) => (props.bob_keys.spend_bch, &props.bob_bch_recv),
+            State::BchLocked(props) => (props.bob_keys.spend_bch, &props.bob_bch_recv),
+            _ => return None,
+        };
 
-        return None;
+        let hash = sha256::hash(recv).to_byte_array();
+        let hash = sha256::hash(&hash).to_byte_array();
+        let enc_sig = AdaptorSignature::encrypted_sign(&self.swap.keys.ves, &spend, &hash);
+        return Some(enc_sig);
     }
 
     pub fn get_contract_pair(&self) -> Option<ContractPair> {
         match self.state.clone() {
-            State::Init => None,
             State::WithBobKeys(v) => Some(v.contract_pair),
             State::ContractMatch(v) => Some(v.contract_pair),
             State::BchLocked(v) => Some(v.contract_pair),
             State::ValidEncSig(v) => Some(v.contract_pair),
+            _ => None,
         }
     }
 
@@ -183,14 +186,7 @@ impl SwapEvents for Alice {
     type State = Alice;
 
     fn transition(mut self, transition: Transition) -> (Self::State, Vec<Action>, Option<Error>) {
-        match &self.state {
-            State::Init => print!("Init - "),
-            State::WithBobKeys(_) => print!("WithBobKeys - "),
-            State::ContractMatch(_) => print!("ContractMatch - "),
-            State::BchLocked(_) => print!("BchLocked - "),
-            State::ValidEncSig(_) => print!("ValidEncSig - "),
-        }
-        println!("{}", &transition);
+        println!("{} - {}", &self.state, &transition);
 
         let current_state = self.state.clone();
         match (current_state, transition) {
@@ -282,6 +278,51 @@ impl SwapEvents for Alice {
                     }
                     _ => return (self, vec![], Some(Error::InvalidTransaction)),
                 }
+            }
+
+            (State::BchLocked(props), Transition::BchConfirmedTx(transaction, _)) => {
+                if let Some((_, TransactionType::ToBob)) =
+                    props.contract_pair.analyze_tx(&transaction)
+                {
+                    let mut instructions = transaction.input[0].script_sig.instructions();
+                    let decsig = match instructions.nth(2) {
+                        Some(Ok(bitcoincash::blockdata::script::Instruction::PushBytes(v))) => {
+                            match bitcoincash::secp256k1::ecdsa::Signature::from_der(v) {
+                                Ok(v) => {
+                                    match ecdsa_fun::Signature::from_bytes(v.serialize_compact()) {
+                                        Some(v) => v,
+                                        None => {
+                                            return (self, vec![], Some(Error::InvalidTransaction))
+                                        }
+                                    }
+                                }
+                                Err(_) => return (self, vec![], Some(Error::InvalidTransaction)),
+                            }
+                        }
+                        _ => return (self, vec![], Some(Error::InvalidTransaction)),
+                    };
+
+                    let bob_spend = AdaptorSignature::recover_decryption_key(
+                        props.bob_keys.spend_bch,
+                        decsig,
+                        self.get_refunc_enc_sig()
+                            .expect("Enc sig should be open at State::BchLocked"),
+                    );
+
+                    let key_pair = monero::KeyPair {
+                        view: props.shared_keypair.view,
+                        spend: self.swap.keys.monero_spend + bob_spend,
+                    };
+
+                    self.state = State::Refund(
+                        monero::Address::from_keypair(self.swap.xmr_network, &key_pair),
+                        key_pair,
+                    );
+
+                    return (self, vec![], None);
+                }
+
+                return (self, vec![], None);
             }
 
             (State::ValidEncSig(_), Transition::EncSig(_)) => {
