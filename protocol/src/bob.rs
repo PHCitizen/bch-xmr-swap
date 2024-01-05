@@ -184,22 +184,28 @@ impl SwapEvents for Bob {
                     self.swap.bch_amount,
                 );
 
-                let shared_keypair = monero::ViewPair {
-                    view: self.swap.keys.monero_view + keys.monero_view,
-                    spend: monero::PublicKey::from_private_key(&self.swap.keys.monero_spend)
-                        + keys.monero_spend,
-                };
+                match contract_pair {
+                    None => return (self, vec![Action::SafeDelete], Some(Error::InvalidTimelock)),
+                    Some(contract_pair) => {
+                        let shared_keypair = monero::ViewPair {
+                            view: self.swap.keys.monero_view + keys.monero_view,
+                            spend: monero::PublicKey::from_private_key(
+                                &self.swap.keys.monero_spend,
+                            ) + keys.monero_spend,
+                        };
 
-                self.state = State::WithAliceKey(Value0 {
-                    alice_bch_recv: receiving.into_bytes(),
-                    contract_pair,
+                        self.state = State::WithAliceKey(Value0 {
+                            alice_bch_recv: receiving.into_bytes(),
+                            contract_pair,
 
-                    shared_keypair,
-                    alice_keys: keys.into(),
-                    xmr_restore_height: 0,
-                });
+                            shared_keypair,
+                            alice_keys: keys.into(),
+                            xmr_restore_height: 0,
+                        });
 
-                return (self, vec![Action::CreateXmrView(shared_keypair)], None);
+                        return (self, vec![Action::CreateXmrView(shared_keypair)], None);
+                    }
+                }
             }
             (
                 State::WithAliceKey(props),

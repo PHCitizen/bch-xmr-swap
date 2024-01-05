@@ -20,6 +20,7 @@ pub enum Error {
     InvalidXmrAddress,
     InvalidSignature,
     InvalidXmrAmount,
+    InvalidTimelock,
 }
 
 impl fmt::Display for Error {
@@ -102,8 +103,8 @@ pub struct Swap {
     #[serde(with = "bch_amount")]
     pub bch_amount: bitcoincash::Amount,
 
-    pub timelock1: i64,
-    pub timelock2: i64,
+    pub timelock1: u32,
+    pub timelock2: u32,
 }
 
 impl Debug for Swap {

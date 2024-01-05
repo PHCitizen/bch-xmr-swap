@@ -44,8 +44,8 @@ struct CreateRequest {
     bch_amount: bitcoincash::Amount,
     #[serde(with = "monero::util::amount::serde::as_pico")]
     xmr_amount: monero::Amount,
-    timelock1: i64,
-    timelock2: i64,
+    timelock1: u32,
+    timelock2: u32,
 }
 
 #[derive(Debug, Serialize)]

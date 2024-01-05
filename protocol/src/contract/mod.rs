@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::keys::bitcoin::{address, Network};
 
 const CONTRACT_BYTECODE: [u8; 47] = hex_literal::hex!("c3519dc4519d00c600cc949d00cb009c6300cd7888547978a85379bb675279b27500cd54798854790088686d6d7551");
+const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000ffff; // bip68
 
 #[derive(Debug)]
 pub enum TransactionType {
@@ -23,18 +24,22 @@ pub struct Contract {
     #[serde(with = "hex")]
     pub success_output: Vec<u8>,
     pub pubkey_ves: bitcoincash::PublicKey,
-    pub timelock: i64,
+    pub timelock: u32,
     #[serde(with = "hex")]
     pub failed_output: Vec<u8>,
 
     pub bch_network: Network,
+
+    // allow others to read struct field, but not creation
+    // We need to check given timelock. SEQUENCE_LOCKTIME_MASK
+    _private: (),
 }
 
 impl Contract {
     pub fn script(&self) -> Vec<u8> {
         let mut contract = Builder::new()
             .push_slice(&self.failed_output)
-            .push_int(self.timelock)
+            .push_int(self.timelock as i64)
             .push_key(&self.pubkey_ves)
             .push_slice(&self.success_output)
             .push_int(self.mining_fee as i64)
@@ -94,42 +99,49 @@ pub struct ContractPair {
 }
 
 impl ContractPair {
+    // None variant is timelock > SEQUENCE_LOCKTIME_MASK
     pub fn create(
         mining_fee: u64,
         bob_receiving: Vec<u8>,
         bob_pubkey_ves: bitcoincash::PublicKey,
         alice_receiving: Vec<u8>,
         alice_pubkey_ves: bitcoincash::PublicKey,
-        timelock1: i64,
-        timelock2: i64,
+        timelock0: u32,
+        timelock1: u32,
         bch_network: Network,
         swaplock_in: bitcoincash::Amount,
-    ) -> ContractPair {
+    ) -> Option<ContractPair> {
+        if timelock0 > SEQUENCE_LOCKTIME_MASK || timelock1 > SEQUENCE_LOCKTIME_MASK {
+            return None;
+        }
+
         let refund = Contract {
             mining_fee,
             success_output: bob_receiving.clone(),
             pubkey_ves: alice_pubkey_ves,
-            timelock: timelock2,
+            timelock: timelock1,
             failed_output: alice_receiving.clone(),
             bch_network,
+            _private: (),
         };
 
         let swaplock = Contract {
             mining_fee,
             success_output: alice_receiving.clone(),
             pubkey_ves: bob_pubkey_ves,
-            timelock: timelock1,
+            timelock: timelock0,
             failed_output: refund.locking_script(),
             bch_network,
+            _private: (),
         };
 
-        ContractPair {
+        Some(ContractPair {
             swaplock,
             refund,
             alice_receiving,
             bob_receiving,
             swaplock_in_sats: swaplock_in.to_sat(),
-        }
+        })
     }
 
     pub fn analyze_tx(
@@ -192,6 +204,7 @@ mod test {
             timelock: 1000,
             failed_output: output,
             bch_network: crate::keys::bitcoin::Network::Testnet,
+            _private: (),
         };
 
         assert_eq!(

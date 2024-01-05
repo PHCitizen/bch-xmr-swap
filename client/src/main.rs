@@ -22,8 +22,8 @@ const BASE_URL: &str = "http://localhost:8080";
 
 async fn create_new_trade(
     client: &reqwest::Client,
-    timelock1: i64,
-    timelock2: i64,
+    timelock1: u32,
+    timelock2: u32,
     bch_amount: bitcoincash::Amount,
     xmr_amount: monero::Amount,
 ) -> anyhow::Result<String> {

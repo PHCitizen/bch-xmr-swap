@@ -213,18 +213,24 @@ impl SwapEvents for Alice {
                     self.swap.bch_amount,
                 );
 
-                self.state = State::WithBobKeys(Value0 {
-                    bob_bch_recv: receiving.into_bytes(),
-                    contract_pair: contract,
-                    shared_keypair: monero::ViewPair {
-                        view: self.swap.keys.monero_view + keys.monero_view,
-                        spend: monero::PublicKey::from_private_key(&self.swap.keys.monero_spend)
-                            + keys.monero_spend,
-                    },
-                    bob_keys: keys.into(),
-                });
+                match contract {
+                    None => return (self, vec![Action::SafeDelete], Some(Error::InvalidTimelock)),
+                    Some(contract) => {
+                        self.state = State::WithBobKeys(Value0 {
+                            bob_bch_recv: receiving.into_bytes(),
+                            contract_pair: contract,
+                            shared_keypair: monero::ViewPair {
+                                view: self.swap.keys.monero_view + keys.monero_view,
+                                spend: monero::PublicKey::from_private_key(
+                                    &self.swap.keys.monero_spend,
+                                ) + keys.monero_spend,
+                            },
+                            bob_keys: keys.into(),
+                        });
 
-                return (self, vec![], None);
+                        return (self, vec![], None);
+                    }
+                }
             }
             (
                 State::WithBobKeys(props),
