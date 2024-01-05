@@ -17,6 +17,8 @@
 //!                 If it does, get decsig, Transition::DecSig
 //!     SwapSuccess(monero::KeyPair, restore_height: u64)
 
+use std::fmt;
+
 use anyhow::bail;
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use ecdsa_fun::adaptor::EncryptedSignature;
@@ -64,6 +66,19 @@ pub enum State {
     VerifiedEncSig(Value0),
     MoneroLocked(Value2),
     SwapSuccess(#[serde(with = "monero_key_pair")] monero::KeyPair, u64),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::Init => write!(f, "BobState::Init"),
+            State::WithAliceKey(_) => write!(f, "BobState::WithAliceKey"),
+            State::ContractMatch(_) => write!(f, "BobState::ContractMatch"),
+            State::VerifiedEncSig(_) => write!(f, "BobState::VerifiedEncSig"),
+            State::MoneroLocked(_) => write!(f, "BobState::MoneroLocked"),
+            State::SwapSuccess(_, _) => write!(f, "BobState::SwapSuccess"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -19,12 +19,8 @@
 //!         -> Alice can get swap_tx and broadcast it
 //!
 
-use crate::{
-    blockchain::{scan_address_conf_tx, TcpElectrum},
-    contract::TransactionType,
-    protocol::{Action, SwapEvents},
-    utils::monero_view_pair,
-};
+use std::fmt;
+
 use anyhow::bail;
 use bitcoin_hashes::{sha256::Hash as sha256, Hash};
 use bitcoincash::{
@@ -38,10 +34,12 @@ use serde_json::json;
 use crate::{
     adaptor_signature::AdaptorSignature,
     bitcoincash::secp256k1::ecdsa,
-    contract::ContractPair,
+    blockchain::{scan_address_conf_tx, TcpElectrum},
+    contract::{ContractPair, TransactionType},
     keys::{KeyPublic, KeyPublicWithoutProof},
     proof,
-    protocol::{Error, Swap, Transition},
+    protocol::{Action, Error, Swap, SwapEvents, Transition},
+    utils::monero_view_pair,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +86,18 @@ pub enum State {
     ContractMatch(Value0),
     BchLocked(Value1),
     ValidEncSig(Value2),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::Init => write!(f, "AliceState:Init"),
+            State::WithBobKeys(_) => write!(f, "AliceState:WithBobKeys"),
+            State::ContractMatch(_) => write!(f, "AliceState:ContractMatch"),
+            State::BchLocked(_) => write!(f, "AliceState:BchLocked"),
+            State::ValidEncSig(_) => write!(f, "AliceState:ValidEncSig"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
