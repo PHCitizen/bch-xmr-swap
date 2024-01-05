@@ -1,3 +1,8 @@
 /target
 /test
 /.trades/**/*.json
+
+!/.trades/ongoing/eXQBT0jL3e-client.json
+!/.trades/ongoing/eXQBT0jL3e-server.json
+!/.trades/ongoing/vlKFnqips8-client.json
+!/.trades/ongoing/vlKFnqips8-server.json

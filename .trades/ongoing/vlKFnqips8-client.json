@@ -1,0 +1,31 @@
+{
+  "swap": {
+    "Alice": {
+      "state": {
+        "Refund": [
+          "43ksEUrQwL8hpSqyAV498AAqnSntEiEBaPKHz1nrMuPU9U9ZR655TuBCUv71PyeoXnHqbUq5RdHsbbYmntrQzRnwRha7Z9b",
+          {
+            "spend": "8579fb63828175100bc71b8f8b3ccbd641482554c2637c1eaae378f422cee10a",
+            "view": "802ff310ecc831d569aa1e08fbe4e595d8ac3e44c76cf49e98b22cb536787d05"
+          }
+        ]
+      },
+      "swap": {
+        "id": "",
+        "xmr_network": "Mainnet",
+        "bch_network": "Mainnet",
+        "keys": {
+          "monero_spend": "40623cf7978dc57d9f19817a174a2b4103d6b163865ff2b85ccfa4937d111404",
+          "monero_view": "6e81a9909227b6c89978da645e47a88838908d58fb7157be458671aecff54808",
+          "ves": "L33oXLtvALCZK2JiQb3EohTzhQnQdFetNenv3d5Te5Xfkx6PKSBH"
+        },
+        "bch_recv": "76a914317bb579dba88c13faccd9f52910dbe9d68cc8e688ac",
+        "xmr_amount": 100000,
+        "bch_amount": 10000,
+        "timelock1": 2,
+        "timelock2": 2
+      }
+    }
+  },
+  "refund_private_key": "L254GbdXJjx4yiXyKybVRUcDxuxBSEG4pnQaLyMPnbV6YnkSE4m6"
+}

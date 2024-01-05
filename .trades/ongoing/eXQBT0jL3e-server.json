@@ -1,0 +1,32 @@
+{
+  "swap": {
+    "Bob": {
+      "state": {
+        "SwapSuccess": [
+          {
+            "spend": "fc476607c1c7c2ac403a88a768cedae510f2a067b69749f91fea485126eca90d",
+            "view": "026c0b79b05934814d39bcfed5715c9d22b9ceaf6a8f118d86bf12a071aba90f"
+          },
+          "43unSddtX9iREffuDzs8gHPvVsu56Bfb4D4RaHjqFyQYd1PPwyJUWKX2ZmX9dxM3kiDq3Ct6mzeYDH6zsJJWjz6vFamaatk",
+          3055289
+        ]
+      },
+      "swap": {
+        "id": "eXQBT0jL3e",
+        "xmr_network": "Mainnet",
+        "bch_network": "Mainnet",
+        "keys": {
+          "monero_spend": "76cfafca31b31e49e246571d65cec4e63c39711c9cf9a5136d7d4bcee7e6290f",
+          "monero_view": "a5c023dc2ad30048bb4e064005473e283c8d6477c475e00069b4f9e64786bd07",
+          "ves": "Kxb6U6boipZyJ8TUhsJpd2mrP6VhnWF8KBjKzHxsdMrWUoHqdeW2"
+        },
+        "bch_recv": "76a9149a6d05e1e725ed4e4254b34b61d3e7760fff986588ac",
+        "xmr_amount": 100000,
+        "bch_amount": 10000,
+        "timelock1": 2,
+        "timelock2": 2
+      }
+    }
+  },
+  "refund_private_key": "L1vvrjtKaTXFvjKfT2JX73NHYGRiAcJeLby2Ci1bqiVzfoKfwv9w"
+}

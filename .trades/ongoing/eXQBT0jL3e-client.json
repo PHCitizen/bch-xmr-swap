@@ -1,0 +1,116 @@
+{
+  "swap": {
+    "Alice": {
+      "state": {
+        "ValidEncSig": {
+          "bob_keys": {
+            "monero_spend": "6733a71549bc12affbffe246e30b410cc39d33571d26be4a62ccfec883fce6a5",
+            "monero_view": "a5c023dc2ad30048bb4e064005473e283c8d6477c475e00069b4f9e64786bd07",
+            "ves": "027a7ce6addff4ed215b84fce6fa873fd9e0c0b8f7dc46aa6b45453af2cc4a2450",
+            "spend_bch": "03afc8ee06e9f87ec88fed0326978864ca6577168b13180b2bfcd9c7a0b9451618"
+          },
+          "bob_bch_recv": "76a9149a6d05e1e725ed4e4254b34b61d3e7760fff986588ac",
+          "contract_pair": {
+            "swaplock": {
+              "mining_fee": 1000,
+              "success_output": "76a91485bc957e1184eca3f8e3fac3bbec72bc135d8f6788ac",
+              "pubkey_ves": "027a7ce6addff4ed215b84fce6fa873fd9e0c0b8f7dc46aa6b45453af2cc4a2450",
+              "timelock": 2,
+              "failed_output": "a91443265bc939f862ca5c66dc9f8c4379578973b94987",
+              "bch_network": "Mainnet",
+              "_private": null
+            },
+            "refund": {
+              "mining_fee": 1000,
+              "success_output": "76a9149a6d05e1e725ed4e4254b34b61d3e7760fff986588ac",
+              "pubkey_ves": "02e2c2953822ec74ed7e2bae2b97de48e81ebfbcb93c8a9d44af6ee80a359a909c",
+              "timelock": 2,
+              "failed_output": "76a91485bc957e1184eca3f8e3fac3bbec72bc135d8f6788ac",
+              "bch_network": "Mainnet",
+              "_private": null
+            },
+            "alice_receiving": [
+              118,
+              169,
+              20,
+              133,
+              188,
+              149,
+              126,
+              17,
+              132,
+              236,
+              163,
+              248,
+              227,
+              250,
+              195,
+              187,
+              236,
+              114,
+              188,
+              19,
+              93,
+              143,
+              103,
+              136,
+              172
+            ],
+            "bob_receiving": [
+              118,
+              169,
+              20,
+              154,
+              109,
+              5,
+              225,
+              231,
+              37,
+              237,
+              78,
+              66,
+              84,
+              179,
+              75,
+              97,
+              211,
+              231,
+              118,
+              15,
+              255,
+              152,
+              101,
+              136,
+              172
+            ],
+            "swaplock_in_sats": 10000,
+            "mining_fee": 1000,
+            "bch_network": "Mainnet"
+          },
+          "shared_keypair": {
+            "spend": "3c5d190e218ba990e537f0a3c8d8c2890b3fab4348006f4818a22a843c6725d7",
+            "view": "026c0b79b05934814d39bcfed5715c9d22b9ceaf6a8f118d86bf12a071aba90f"
+          },
+          "outpoint": "fd32b7b72f8de2b022e12fcb925d83b60d6e9fd121098b72c560b6870a60c86e:0",
+          "dec_sig": "304402204c837eb43ac0450426e224f4479aafc67520db5063f1d25a9a32b8017ce403aa022062132decb368365c7bcea94b0b763afc1c0b72d57aab4f7e198d6d334da3df1c"
+        }
+      },
+      "swap": {
+        "id": "",
+        "xmr_network": "Mainnet",
+        "bch_network": "Mainnet",
+        "keys": {
+          "monero_spend": "734cac99a977b6bb3490282de2f9f413d4b82f4b1a9ea3e5b26cfd823e05800e",
+          "monero_view": "5dabe79c8586333992eab5bed02a1e75e62b6a38a619318c1d0b19b92925ec07",
+          "ves": "KxJ8PZa9rWQ1VbFb7eT5N14Xt8XfAHFEKKNVoCbUPFxhT8dWJeCs"
+        },
+        "bch_recv": "76a91485bc957e1184eca3f8e3fac3bbec72bc135d8f6788ac",
+        "xmr_amount": 100000,
+        "bch_amount": 10000,
+        "timelock1": 2,
+        "timelock2": 2
+      }
+    }
+  },
+  "refund_private_key": "L5T55NZBhH2SuWpuDTUqcXecPcEDYxAPXCCV86RrZbmM1bZYv3AR"
+}

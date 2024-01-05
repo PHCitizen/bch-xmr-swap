@@ -38,9 +38,13 @@ monero-wallet-cli --log-level=3 --daemon-address=http://localhost:18081 --untrus
 - SwapLock -> Alice: 91b9ab4ec54d22b46330c6ba9e5bb07a104513d7d132c2b6b7c48c76c921f40b
 - Sweep Alice private key: 76d98630bc1ddd68d42905de1eaa41ae2e024dc75aa0622e1423de130caf0e71
 - XMR Shared Address: 43unSddtX9iREffuDzs8gHPvVsu56Bfb4D4RaHjqFyQYd1PPwyJUWKX2ZmX9dxM3kiDq3Ct6mzeYDH6zsJJWjz6vFamaatk
+- Alice Keys `.trades/ongoing/eXQBT0jL3e-client.json` TradeId: eXQBT0jL3e
+- Bob Keys `.trades/ongoing/eXQBT0jL3e-server.json` TradeId: eXQBT0jL3e
 
 #### Alice Failed to lock XMR
 - SwapLock Contract: bitcoincash:pzavf0mxs2kfec8xsj7u8s6pquussw9dgs7mnmknl4
 - SwapLock -> Refund: 1604dc533f241c643ad66aa8e64910298c39367dbf8bce1159bdbc5f5bb25e58
 - Refund -> Bob Output: 2746ec141696a5b4dafc13eb8ce98ab3d4c4451967480d6d5af4996515241eeb
 - Bob Spend: 8482981fd76ce8e8d82c2d299828941070fedebfdc1193edf70c704af5b01922
+- Alice Keys `.trades/ongoing/vlKFnqips8-client.json` TradeId: eXQBT0jL3e
+- Bob Keys `.trades/ongoing/vlKFnqips8-server.json` TradeId: eXQBT0jL3e
