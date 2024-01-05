@@ -62,7 +62,7 @@ async fn create(
         return Err(Error::new(StatusCode::FORBIDDEN, "Invalid amount"));
     }
 
-    if request.timelock1 != 20 || request.timelock2 != 20 {
+    if request.timelock1 != state.timelock1 || request.timelock2 != state.timelock2 {
         return Err(Error::new(StatusCode::FORBIDDEN, "Invalid timelock"));
     }
 

@@ -26,6 +26,9 @@ pub struct AppState {
     bch_min_conf: u32,
     monero_network: monero::Network,
     bch_network: Network,
+
+    timelock1: u32,
+    timelock2: u32,
 }
 
 type TAppState = Arc<AppState>;
@@ -117,8 +120,11 @@ async fn main() {
     let monero_wallet_addr = "http://localhost:8081";
     let fullcrum_tcp = "localhost:50001";
 
-    let monero_network = monero::Network::Stagenet;
-    let bch_network = Network::Testnet;
+    let monero_network = monero::Network::Mainnet;
+    let bch_network = Network::Regtest;
+
+    let timelock1 = 2;
+    let timelock2 = 2;
 
     // ===================================================
 
@@ -143,6 +149,8 @@ async fn main() {
         bch_min_conf,
         monero_network,
         bch_network,
+        timelock1,
+        timelock2,
     });
 
     tokio::spawn({
