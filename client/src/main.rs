@@ -135,7 +135,7 @@ impl TransitionManager {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let bch_min_confirmation: i64 = 1;
+    let bch_min_confirmation = 1;
 
     let fullcrum_tcp = "localhost:50001";
     let monero_network = monero::Network::Stagenet;

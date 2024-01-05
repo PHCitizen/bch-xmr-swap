@@ -23,7 +23,7 @@ pub struct AppState {
     bch_server: TcpElectrum,
     monerod: monero_rpc::DaemonJsonRpcClient,
     monero_wallet: Mutex<monero_rpc::WalletClient>,
-    bch_min_conf: i64,
+    bch_min_conf: u32,
     monero_network: monero::Network,
     bch_network: Network,
 }

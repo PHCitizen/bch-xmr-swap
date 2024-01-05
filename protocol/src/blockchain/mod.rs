@@ -154,7 +154,7 @@ impl Clone for TcpElectrum {
 
 #[derive(Deserialize)]
 pub struct TxInfo0 {
-    confirmations: i64,
+    confirmations: u32,
     #[serde(with = "hex")]
     hex: Vec<u8>,
 }
@@ -167,8 +167,8 @@ pub struct TxInfo {
 pub async fn scan_address_conf_tx(
     bch_server: &TcpElectrum,
     address: &str,
-    min_conf: i64,
-) -> Vec<Transaction> {
+    min_conf: u32,
+) -> Vec<(Transaction, u32)> {
     let response = bch_server
         .send("blockchain.address.get_history", json!([address, true]))
         .await
@@ -197,7 +197,10 @@ pub async fn scan_address_conf_tx(
             continue;
         }
 
-        txs.push(bitcoincash::consensus::deserialize(&tx_info.hex).unwrap());
+        txs.push((
+            bitcoincash::consensus::deserialize::<bitcoincash::Transaction>(&tx_info.hex).unwrap(),
+            tx_info.confirmations,
+        ));
     }
 
     txs

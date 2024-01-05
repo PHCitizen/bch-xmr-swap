@@ -261,8 +261,8 @@ impl SwapEvents for Alice {
                 );
             }
 
-            (State::ContractMatch(props), Transition::BchConfirmedTx(transaction)) => {
-                match props.contract_pair.analyze_tx(transaction) {
+            (State::ContractMatch(props), Transition::BchConfirmedTx(transaction, _)) => {
+                match props.contract_pair.analyze_tx(&transaction) {
                     Some((outpoint, TransactionType::ToSwapLock)) => {
                         self.state = State::BchLocked(Value1 {
                             bob_keys: props.bob_keys,
@@ -353,7 +353,7 @@ pub struct Runner<'a> {
     pub bch: &'a TcpElectrum,
     // pub monerod: &'a monero_rpc::DaemonJsonRpcClient,
     // pub monero_wallet: &'a Mutex<monero_rpc::WalletClient>,
-    pub min_bch_conf: i64,
+    pub min_bch_conf: u32,
 }
 
 impl Runner<'_> {
@@ -365,8 +365,10 @@ impl Runner<'_> {
             for address in [swaplock, refund].into_iter() {
                 let txs = scan_address_conf_tx(&self.bch, &address, self.min_bch_conf).await;
                 println!("{}txs address {}", txs.len(), address);
-                for tx in txs {
-                    let _ = self.priv_transition(Transition::BchConfirmedTx(tx)).await;
+                for (tx, conf) in txs {
+                    let _ = self
+                        .priv_transition(Transition::BchConfirmedTx(tx, conf))
+                        .await;
                 }
             }
         }

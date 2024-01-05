@@ -68,7 +68,7 @@ pub enum Transition {
 
     /// You are responsible to only use on confirmed tx
     #[serde(skip)]
-    BchConfirmedTx(bitcoincash::Transaction),
+    BchConfirmedTx(bitcoincash::Transaction, u32), // TODO: u32==confirmation. is it really u32?
     XmrLockVerified(#[serde(with = "monero_amount")] monero::Amount),
 
     SetXmrRestoreHeight(u64),
@@ -81,7 +81,7 @@ impl Display for Transition {
             Transition::Contract { .. } => write!(f, "Transition::Contract"),
             Transition::EncSig(_) => write!(f, "Transition::EncSig"),
             Transition::DecSig(_) => write!(f, "Transition::DecSig"),
-            Transition::BchConfirmedTx(_) => write!(f, "Transition::BchConfirmedTx"),
+            Transition::BchConfirmedTx(_, _) => write!(f, "Transition::BchConfirmedTx"),
             Transition::XmrLockVerified(_) => write!(f, "Transition::XmrLockVerified"),
             Transition::SetXmrRestoreHeight(_) => write!(f, "Transition::SetXmrRestoreHeight"),
         }
