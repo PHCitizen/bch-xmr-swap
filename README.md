@@ -1,4 +1,4 @@
-# BCH-XMR-SWAP POC
+# BCH-XMR-SWAP PoC
 
 
 
@@ -32,7 +32,8 @@ monero-wallet-cli --log-level=3 --daemon-address=http://localhost:18081 --untrus
 
 ### Mainnet Transactions
 
-> will provide video asap
+> Video are provided at the root of this repository ending it .mp4
+> File is >10mb so i cant embed it. You can just download it.
 
 #### Happy Path
 - SwapLock -> Alice: 91b9ab4ec54d22b46330c6ba9e5bb07a104513d7d132c2b6b7c48c76c921f40b
