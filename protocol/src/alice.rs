@@ -1,24 +1,3 @@
-//! >> Keywords <<
-//!     -> PrevTransition - The transition that makes the state-machine move to current state
-//!     -> OEW (On Enter the Watcher) - If we enter to this state, the watcher must...
-//!
-//! >> State <<
-//!     Init
-//!     WithBobKeys
-//!         -> Bob are able to get contract
-//!     ContractMatch
-//!         -> OEW
-//!             -> Watch the SwapLock contract if it receive tx with correct amount
-//!                 Watch that tx for BCH_MIN_CONFIRMATION
-//!                 If BCH_MIN_CONFIRMATION satisfied, Transition::BchLockVerified
-//!         -> Bob are able to get refund encrypted signature
-//!     BchLocked
-//!         -> OEW
-//!             -> Must send the XMR to shared address
-//!     ValidEncSig
-//!         -> Alice can get swap_tx and broadcast it
-//!
-
 use std::fmt;
 
 use anyhow::bail;

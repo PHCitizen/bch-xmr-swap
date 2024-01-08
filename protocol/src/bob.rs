@@ -1,22 +1,3 @@
-//! >> Keywords <<
-//!     -> PrevTransition - The transition that makes the state-machine move to current state
-//!     -> OEW (On Enter the Watcher) - If we enter to this state, the watcher must...
-//!
-//! >> State <<
-//!     Init
-//!     WithAliceKey
-//!         -> Alice are able to get contract
-//!     ContractMatch
-//!     VerifiedEncSig
-//!         -> OEW
-//!             -> Send bch to SwapLock contract
-//!             -> get the current xmr block. Will be used for `restore block`
-//!     MoneroLocked
-//!         -> OEW
-//!             -> Watch the SwapLock contract if it is send to alice address
-//!                 If it does, get decsig, Transition::DecSig
-//!     SwapSuccess(monero::KeyPair, restore_height: u64)
-
 use std::{fmt, time::Duration};
 
 use anyhow::bail;
