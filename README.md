@@ -9,6 +9,20 @@ https://github.com/PHCitizen/bch-xmr-swap/assets/75726261/00596f8d-e98f-4597-865
 - SwapLock Contract on video: `bchtest:prf659upqyz96d7l4auuxt567fdrnrr4dyt6ddc8s5`
 - SwapLock Tx claim by "Alice": `5d9c13db8c40b2ab29b58a1f480bc90ba0746a7512ed78ceb2467f5084c7193a`
 
+### Story
+I interested in the bounty thats why i take a look. After some research i found that the contract v3 has some error on the signature part, thats why i contacted @bitcoincashautist. After exchanging idea, he come up with the contract v4. After that i started creating this repo. I was afraid to show it because i dont really know if i can finish it on time. I don't want to give "false hope" or make anyone waits on me (sorry @bitcoincashautist). 
+
+I almost finish it but i get very busy on school stuff. Then i came back again, and thats the time @bitcoincashautist informed me that we are racing for this bounty. So finish some missing part and do the testing.
+
+- Why @mainnet_pat doing the flipstarter?
+    - idk if i am able to make it on time, I still need to go in school😅.
+    - They have much more experience than me
+    - They are well-known in bch community and built many project.
+    
+> I could help if needed. But i can't commit.
+
+
+### Development
 
 Run client and server with auto-reload on save
 ```
@@ -49,3 +63,13 @@ monero-wallet-cli --log-level=3 --daemon-address=http://localhost:18081 --untrus
 - Bob Spend: 8482981fd76ce8e8d82c2d299828941070fedebfdc1193edf70c704af5b01922
 - Alice Keys `.trades/ongoing/vlKFnqips8-client.json` TradeId: eXQBT0jL3e
 - Bob Keys `.trades/ongoing/vlKFnqips8-server.json` TradeId: eXQBT0jL3e
+
+
+### Credits 
+- The adaptor signature are base in https://github.com/comit-network/xmr-btc-swap
+- The contract use are created by @bitcoincashautist https://gitlab.com/0353F40E/cross-chain-swap-ves/-/tree/master
+- Discussions:
+    - https://bitcoincashresearch.org/t/monero-bch-atomic-swaps/545
+    - https://bounties.monero.social/posts/37/18-421m-bch-xmr-atomic-swaps
+
+
