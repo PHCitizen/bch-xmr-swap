@@ -73,3 +73,9 @@ monero-wallet-cli --log-level=3 --daemon-address=http://localhost:18081 --untrus
     - https://bounties.monero.social/posts/37/18-421m-bch-xmr-atomic-swaps
 
 
+# Bounty Address
+https://bounties.monero.social/posts/37/18-921m-bch-xmr-atomic-swaps 
+
+monero address: 41pehjm4dYjeHNFKBfu3KJVE7zg5B6G3Cim54SbbMruyAo5M1yF84TVAAerVUVUbfN7qTFqhQioGMHJsextkVao36eyae4Z 
+
+bch address: bitcoincash:qph2r7qg026pqtpgz8lp4t8nwhw3wlnxcch2apefdc
